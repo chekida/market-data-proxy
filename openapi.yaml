@@ -1,0 +1,48 @@
+openapi: 3.1.0
+info:
+  title: Twelve Data Proxy (ngrok)
+  version: 1.1.0
+  description: Minimal schema exposing quote, SMA, and time-series endpoints.
+servers:
+  - url: https://postcephalic-samson-squarrose.ngrok-free.dev
+paths:
+  /quote/{symbol}:
+    get:
+      operationId: quoteBySymbol
+      summary: Latest quote (path param)
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+  /sma:
+    get:
+      operationId: getSMA
+      summary: Simple Moving Average (query style)
+      parameters:
+        - { name: symbol, in: query, required: true, schema: { type: string } }
+        - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
+        - { name: time_period, in: query, required: true, schema: { type: integer, default: 50 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+  /time_series:
+    get:
+      operationId: getTimeSeries
+      summary: OHLCV time series (query style)
+      parameters:
+        - { name: symbol, in: query, required: true, schema: { type: string } }
+        - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
+        - { name: outputsize, in: query, required: false, schema: { type: integer, default: 300 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
