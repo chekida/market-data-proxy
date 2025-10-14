@@ -79,7 +79,7 @@ async def get_company_news(
             summary=it.get("summary"),
             ticker=symbol.upper(),
         ))
-    return out
+    return out
 
 @app.on_event("startup")
 async def check_key():
@@ -491,6 +491,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
         }
+
 
 
 
