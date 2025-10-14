@@ -15,6 +15,72 @@ BASE = "https://api.twelvedata.com"
 # --- fastapi app ---
 app = FastAPI(title="My Twelve Data Proxy", version="1.0.0")
 
+# -------------------- COMPANY NEWS (Finnhub) --------------------
+from datetime import date, timedelta
+import os, httpx
+from fastapi import HTTPException, Query
+
+FINNHUB_KEY = os.getenv("FINNHUB_KEY")
+FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
+
+def _require_env(val: str | None, name: str):
+    if not val:
+        raise HTTPException(status_code=500, detail=f"Missing {name} environment variable")
+
+def _news_item(headline, source, url, published_at, summary=None, ticker=None):
+    return {
+        "ticker": ticker,
+        "headline": headline,
+        "source": source,
+        "url": url,
+        "published_at": published_at,   # epoch seconds from Finnhub
+        "summary": summary,
+    }
+
+@app.get("/news/company")
+async def get_company_news(
+    symbol: str = Query(..., description="Ticker, e.g., AAPL"),
+    days: int = Query(3, ge=1, le=14, description="Lookback (1–14 days)")
+):
+    """
+    Returns recent company headlines from Finnhub in a normalized format.
+    """
+    _require_env(FINNHUB_KEY, "FINNHUB_KEY")
+    to_d = date.today()
+    from_d = to_d - timedelta(days=days)
+
+    params = {
+        "symbol": symbol.upper(),
+        "from": from_d.isoformat(),
+        "to": to_d.isoformat(),
+        "token": FINNHUB_KEY,
+    }
+
+    async with httpx.AsyncClient(timeout=20) as s:
+        r = await s.get(FINNHUB_COMPANY_NEWS, params=params)
+
+    # Finnhub returns a list on success, or {error: "..."} on failure
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=r.text[:200])
+
+    if not isinstance(data, list):
+        msg = (isinstance(data, dict) and data.get("error")) or "Unexpected Finnhub response"
+        raise HTTPException(status_code=502, detail=f"Finnhub error: {msg}")
+
+    out = []
+    for it in data[:25]:
+        out.append(_news_item(
+            headline=it.get("headline"),
+            source=it.get("source"),
+            url=it.get("url"),
+            published_at=it.get("datetime"),
+            summary=it.get("summary"),
+            ticker=symbol.upper(),
+        ))
+    return out
+
 @app.on_event("startup")
 async def check_key():
     if TD_KEY:
@@ -425,6 +491,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
         }
+
 
 
 
