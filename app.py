@@ -233,7 +233,7 @@ def health():
     """
     Simple health check endpoint to confirm service is running.
     """
-    return {"status": "ok"}                           
+    return {"status":"ok"}                           
 # -------- COMBINED SUMMARY (one call: quote + SMA50/200 + ATR + 52w + RS vs SPY + news)
 import math
 
@@ -425,6 +425,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
         }
+
 
 
 
