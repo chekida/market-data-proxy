@@ -215,4 +215,195 @@ async def news_company(symbol: str = Query(..., description="e.g., AAPL"),
             "summary": it.get("summary"),
         })
     return out
+# -------- COMBINED SUMMARY (one call: quote + SMA50/200 + ATR + 52w + RS vs SPY + news)
+import math
+
+SPY_SYMBOL = "SPY"  # benchmark for RS
+
+def _to_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+def _rolling_sma(vals, window):
+    if len(vals) < window:
+        return None
+    return sum(vals[-window:]) / window
+
+def _atr14_from_ohlc(values):
+    """
+    values: list of dicts from Twelve Data time_series (can be asc/desc).
+    Returns (atr, atrpct). Needs at least 15 rows.
+    """
+    if not values or len(values) < 15:
+        return (None, None)
+    # Ascending by datetime to compute true range correctly
+    try:
+        ordered = sorted(values, key=lambda v: v["datetime"])
+    except Exception:
+        ordered = values[:]
+    rows = []
+    for v in ordered:
+        o = _to_float(v.get("open"))
+        h = _to_float(v.get("high"))
+        l = _to_float(v.get("low"))
+        c = _to_float(v.get("close"))
+        if None in (o, h, l, c):
+            continue
+        rows.append((o, h, l, c))
+    if len(rows) < 15:
+        return (None, None)
+    trs = []
+    prev_close = rows[0][3]
+    for (_, h, l, c) in rows[1:]:
+        tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+        trs.append(tr)
+        prev_close = c
+    if len(trs) < 14:
+        return (None, None)
+    atr = sum(trs[-14:]) / 14.0
+    last_close = rows[-1][3]
+    atrpct = 100.0 * atr / last_close if last_close else None
+    return (atr, atrpct)
+
+def _fifty_two_week_stats(values):
+    """Return (hi, lo, dist_to_hi_pct) using last ~252 closes if available."""
+    closes = []
+    for v in values:
+        c = _to_float(v.get("close"))
+        if c is not None:
+            closes.append(c)
+    if not closes:
+        return (None, None, None)
+    # Twelve Data usually returns most recent first; take up to last 252
+    window = closes[:252] if len(closes) >= 252 else closes
+    hi = max(window)
+    lo = min(window)
+    last = closes[0]
+    dist = None if not hi or not last else 100.0 * (hi - last) / hi
+    return (hi, lo, dist)
+
+def _pct_change(a, b):
+    if a is None or b is None or b == 0:
+        return None
+    return 100.0 * (a - b) / b
+
+def _rs_scores_vs_spy(values_sym, values_spy):
+    """Approx RS_1M & RS_3M using close-to-close % change vs SPY over ~21/63 trading days."""
+    def closes(lst):
+        out = []
+        for v in lst:
+            c = _to_float(v.get("close"))
+            if c is not None:
+                out.append(c)
+        return out
+    ct = closes(values_sym)
+    cs = closes(values_spy)
+    if len(ct) < 64 or len(cs) < 64:
+        return (None, None)
+    # Most recent first assumed
+    def ret_n(lst, n):
+        try:
+            return _pct_change(lst[0], lst[n])
+        except Exception:
+            return None
+    r1_t, r3_t = ret_n(ct, 21), ret_n(ct, 63)
+    r1_s, r3_s = ret_n(cs, 21), ret_n(cs, 63)
+    rs1 = (r1_t - r1_s) if (r1_t is not None and r1_s is not None) else None
+    rs3 = (r3_t - r3_s) if (r3_t is not None and r3_s is not None) else None
+    return (rs1, rs3)
+
+@app.get("/combined/summary")
+async def combined_summary(symbol: str, interval: str = "1day", outputsize: int = 300):
+    # 1) Quote
+    need_key(TD_KEY, "TWELVEDATA_KEY")
+    async with httpx.AsyncClient(timeout=15) as s:
+        qr = await s.get(f"{TD_BASE}/quote", params={"symbol": symbol, "apikey": TD_KEY})
+    try:
+        q = qr.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=qr.text[:200])
+    if isinstance(q, dict) and q.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {q.get('message')}")
+    if isinstance(q, list) and q:
+        q = q[0]
+    last_price = _to_float(q.get("price") or q.get("close"))
+    ts_iso = q.get("datetime")
+
+    # 2) Time series for symbol and SPY
+    params = {"interval": interval, "outputsize": outputsize, "order": "desc", "apikey": TD_KEY}
+    async with httpx.AsyncClient(timeout=30) as s:
+        rs_sym = await s.get(f"{TD_BASE}/time_series", params={"symbol": symbol, **params})
+        rs_spy = await s.get(f"{TD_BASE}/time_series", params={"symbol": SPY_SYMBOL, **params})
+    try:
+        ts_sym = rs_sym.json()
+        ts_spy = rs_spy.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Bad time_series payload")
+    if isinstance(ts_sym, dict) and ts_sym.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {ts_sym.get('message')}")
+    if isinstance(ts_spy, dict) and ts_spy.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {ts_spy.get('message')}")
+
+    values_sym = (ts_sym or {}).get("values") or []
+    values_spy = (ts_spy or {}).get("values") or []
+
+    # 3) SMA50/200
+    closes = []
+    for v in values_sym:
+        c = _to_float(v.get("close"))
+        if c is not None:
+            closes.append(c)
+    sma50 = _rolling_sma(closes, 50)
+    sma200 = _rolling_sma(closes, 200)
+
+    # 4) ATR14 and 52-week stats
+    atr, atrpct = _atr14_from_ohlc(values_sym)
+    hi, lo, dist_pct = _fifty_two_week_stats(values_sym)
+
+    # 5) RS vs SPY
+    rs1, rs3 = _rs_scores_vs_spy(values_sym, values_spy)
+
+    # 6) Recent company news (best-effort)
+    news_out = []
+    if FINNHUB_KEY:
+        try:
+            to_d = date.today()
+            from_d = to_d - timedelta(days=3)
+            async with httpx.AsyncClient(timeout=20) as s:
+                nr = await s.get(
+                    "https://finnhub.io/api/v1/company-news",
+                    params={"symbol": symbol.upper(), "from": from_d.isoformat(), "to": to_d.isoformat(), "token": FINNHUB_KEY},
+                )
+            nn = nr.json()
+            if isinstance(nn, list):
+                for it in nn[:5]:
+                    news_out.append({
+                        "ticker": symbol.upper(),
+                        "headline": it.get("headline"),
+                        "source": it.get("source"),
+                        "url": it.get("url"),
+                        "published_at": it.get("datetime"),
+                        "summary": it.get("summary"),
+                    })
+        except Exception:
+            news_out = []
+
+    return {
+        "symbol": (q.get("symbol") or symbol).upper(),
+        "price": last_price,
+        "timestamp": ts_iso,
+        "sma50": sma50,
+        "sma200": sma200,
+        "atr14": atr,
+        "atrpct": atrpct,
+        "fiftyTwoWeekHigh": hi,
+        "fiftyTwoWeekLow": lo,
+        "distTo52wHighPct": dist_pct,
+        "rs_1m_vs_spy": rs1,
+        "rs_3m_vs_spy": rs3,
+        "news": news_out,
+        "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
+    }
 
