@@ -124,3 +124,47 @@ components:
             - { type: integer, description: "Epoch seconds (Finnhub)" }
             - { type: string, description: "ISO8601" }
         summary: { type: string, nullable: true }
+/combined/summary:
+    get:
+      operationId: getCombinedSummary
+      summary: Quote + SMA50/200 + ATR(14) + 52w stats + RS vs SPY + recent company news
+      parameters:
+        - { name: symbol, in: query, required: true, schema: { type: string } }
+        - { name: interval, in: query, required: false, schema: { type: string, default: "1day" } }
+        - { name: outputsize, in: query, required: false, schema: { type: integer, default: 300, minimum: 100 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [symbol, price]
+                properties:
+                  symbol: { type: string }
+                  price: { type: number, nullable: true }
+                  timestamp: { type: string, nullable: true }
+                  sma50: { type: number, nullable: true }
+                  sma200: { type: number, nullable: true }
+                  atr14: { type: number, nullable: true }
+                  atrpct: { type: number, nullable: true }
+                  fiftyTwoWeekHigh: { type: number, nullable: true }
+                  fiftyTwoWeekLow: { type: number, nullable: true }
+                  distTo52wHighPct: { type: number, nullable: true }
+                  rs_1m_vs_spy: { type: number, nullable: true }
+                  rs_3m_vs_spy: { type: number, nullable: true }
+                  news:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ticker: { type: string, nullable: true }
+                        headline: { type: string }
+                        source: { type: string, nullable: true }
+                        url: { type: string }
+                        published_at:
+                          oneOf:
+                            - { type: integer }
+                            - { type: string }
+                        summary: { type: string, nullable: true }
+                  note: { type: string, nullable: true }
