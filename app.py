@@ -214,5 +214,4 @@ async def news_company(symbol: str = Query(..., description="e.g., AAPL"),
             "published_at": it.get("datetime"),  # epoch seconds
             "summary": it.get("summary"),
         })
-return out
-
+return out
