@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: Twelve Data Proxy (ngrok)
-  version: 1.1.0
+  title: Twelve Data Proxy (Render/ngrok)
+  version: 1.2.0
   description: Minimal schema exposing quote, SMA, and time-series endpoints.
 servers:
   - url: https://postcephalic-samson-squarrose.ngrok-free.dev
@@ -19,7 +19,9 @@ paths:
         "200":
           description: OK
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
   /sma:
     get:
       operationId: getSMA
@@ -28,21 +30,45 @@ paths:
         - { name: symbol, in: query, required: true, schema: { type: string } }
         - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
         - { name: time_period, in: query, required: true, schema: { type: integer, default: 50 } }
+        - { name: outputsize, in: query, required: false, schema: { type: integer, minimum: 1 } }
       responses:
         "200":
           description: OK
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Series"
   /time_series:
     get:
       operationId: getTimeSeries
       summary: OHLCV time series (query style)
       parameters:
         - { name: symbol, in: query, required: true, schema: { type: string } }
-        - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
-        - { name: outputsize, in: query, required: false, schema: { type: integer, default: 300 } }
+        - { name: interval, in: query, required: true, schema: { type: string, default: "1day", enum: ["1min","5min","15min","30min","1h","1day","1week","1month"] } }
+        - { name: outputsize, in: query, required: false, schema: { type: integer, default: 300, minimum: 1 } }
+        - { name: order, in: query, required: false, schema: { type: string, default: "desc", enum: ["asc","desc"] } }
       responses:
         "200":
           description: OK
           content:
-            application/json: {}
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Series"
+components:
+  schemas:
+    Quote:
+      type: object
+      required: [symbol, price, timestamp]
+      properties:
+        symbol: { type: string }
+        name: { type: string, nullable: true }
+        price: { type: number }
+        currency: { type: string, nullable: true }
+        change: { type: number, nullable: true }
+        percent_change: { type: number, nullable: true }
+        volume: { type: number, nullable: true }
+        timestamp: { type: string, description: "ISO8601" }
+    Series:
+      type: object
+      description: "Pass-through of Twelve Data payload (meta + values)."
+      additionalProperties: true
