@@ -1,10 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Twelve Data Proxy (Render/ngrok)
-  version: 1.2.1
-  description: Minimal schema exposing quote, SMA, and time-series endpoints.
+  title: Market Data + News Proxy
+  version: 1.3.0
 servers:
-  - url: https://market-data-proxy.onrender.com   # <-- your Render URL
+  - url: https://market-data-proxy.onrender.com
 
 paths:
   /quote/{symbol}:
@@ -27,7 +26,7 @@ paths:
   /sma:
     get:
       operationId: getSMA
-      summary: Simple Moving Average (query style)
+      summary: Simple Moving Average (query)
       parameters:
         - { name: symbol, in: query, required: true, schema: { type: string } }
         - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
@@ -44,7 +43,7 @@ paths:
   /time_series:
     get:
       operationId: getTimeSeries
-      summary: OHLCV time series (query style)
+      summary: OHLCV time series (query)
       parameters:
         - { name: symbol, in: query, required: true, schema: { type: string } }
         - { name: interval, in: query, required: true, schema: { type: string, default: "1day", enum: ["1min","5min","15min","30min","1h","1day","1week","1month"] } }
@@ -57,6 +56,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Series"
+
+  /news/company:
+    get:
+      operationId: getCompanyNews
+      summary: Company headlines (Finnhub)
+      parameters:
+        - { name: symbol, in: query, required: true, schema: { type: string } }
+        - { name: days, in: query, required: false, schema: { type: integer, default: 3, minimum: 1, maximum: 14 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NewsItem"
 
 components:
   schemas:
@@ -75,12 +91,10 @@ components:
 
     Series:
       type: object
-      description: Twelve Data-style series payload (meta + values). Kept permissive to tolerate shape changes.
+      description: "Pass-through of Twelve Data payload (meta + values)."
       properties:
         status: { type: string, nullable: true }
-        meta:
-          type: object
-          additionalProperties: true
+        meta: { type: object, additionalProperties: true }
         values:
           type: array
           items:
@@ -92,7 +106,21 @@ components:
               low: { type: number, nullable: true }
               close: { type: number, nullable: true }
               volume: { type: number, nullable: true }
-              sma: { type: number, nullable: true }   # present for /sma
+              sma: { type: number, nullable: true }
             additionalProperties: true
       required: [values]
-      additionalProperties: true
+      additionalProperties: true
+
+    NewsItem:
+      type: object
+      required: [headline, url, published_at]
+      properties:
+        ticker: { type: string, nullable: true }
+        headline: { type: string }
+        source: { type: string, nullable: true }
+        url: { type: string }
+        published_at:
+          oneOf:
+            - { type: integer, description: "Epoch seconds (Finnhub)" }
+            - { type: string, description: "ISO8601" }
+        summary: { type: string, nullable: true }
