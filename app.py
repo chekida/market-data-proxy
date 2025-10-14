@@ -215,6 +215,25 @@ async def news_company(symbol: str = Query(..., description="e.g., AAPL"),
             "summary": it.get("summary"),
         })
     return out
+from fastapi import Response
+
+# -------------------- HEALTH & ROOT CHECKS --------------------
+
+# Handles both GET and HEAD on the root path (used by Render)
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
+    """
+    Root endpoint for Render health checks and basic service info.
+    """
+    return {"ok": True, "docs": "/openapi.yaml"}
+
+# Dedicated health endpoint for uptime monitoring
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
+    """
+    Simple health check endpoint to confirm service is running.
+    """
+    return {"status": "ok"}                           
 # -------- COMBINED SUMMARY (one call: quote + SMA50/200 + ATR + 52w + RS vs SPY + news)
 import math
 
@@ -406,5 +425,6 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
         }
+
 
 
