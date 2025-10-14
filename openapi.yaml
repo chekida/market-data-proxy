@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
   title: Twelve Data Proxy (Render/ngrok)
-  version: 1.2.0
+  version: 1.2.1
   description: Minimal schema exposing quote, SMA, and time-series endpoints.
 servers:
-  - url: https://postcephalic-samson-squarrose.ngrok-free.dev
+  - url: https://market-data-proxy.onrender.com   # <-- your Render URL
+
 paths:
   /quote/{symbol}:
     get:
@@ -22,6 +23,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Quote"
+
   /sma:
     get:
       operationId: getSMA
@@ -29,7 +31,7 @@ paths:
       parameters:
         - { name: symbol, in: query, required: true, schema: { type: string } }
         - { name: interval, in: query, required: true, schema: { type: string, default: "1day" } }
-        - { name: time_period, in: query, required: true, schema: { type: integer, default: 50 } }
+        - { name: time_period, in: query, required: true, schema: { type: integer, default: 50, minimum: 1 } }
         - { name: outputsize, in: query, required: false, schema: { type: integer, minimum: 1 } }
       responses:
         "200":
@@ -38,6 +40,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Series"
+
   /time_series:
     get:
       operationId: getTimeSeries
@@ -54,6 +57,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Series"
+
 components:
   schemas:
     Quote:
@@ -68,7 +72,27 @@ components:
         percent_change: { type: number, nullable: true }
         volume: { type: number, nullable: true }
         timestamp: { type: string, description: "ISO8601" }
+
     Series:
       type: object
-      description: "Pass-through of Twelve Data payload (meta + values)."
-      additionalProperties: true
+      description: Twelve Data-style series payload (meta + values). Kept permissive to tolerate shape changes.
+      properties:
+        status: { type: string, nullable: true }
+        meta:
+          type: object
+          additionalProperties: true
+        values:
+          type: array
+          items:
+            type: object
+            properties:
+              datetime: { type: string }
+              open: { type: number, nullable: true }
+              high: { type: number, nullable: true }
+              low: { type: number, nullable: true }
+              close: { type: number, nullable: true }
+              volume: { type: number, nullable: true }
+              sma: { type: number, nullable: true }   # present for /sma
+            additionalProperties: true
+      required: [values]
+      additionalProperties: true
