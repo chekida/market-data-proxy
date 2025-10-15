@@ -11,6 +11,8 @@ import httpx
 
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVE_KEY")
+FH_BASE = "https://finnhub.io/api/v1"
+FH_KEY = os.getenv("FINNHUB_KEY")
 
 REQUEST_TIMEOUT_SECS = 30
 MAX_RETRIES = 3
@@ -437,3 +439,4 @@ async def market_health(
         "symbols": out,
         "regime": {"label": regime["regime"], "notes": regime["notes"]}
     })
+
