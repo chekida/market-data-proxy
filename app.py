@@ -1,40 +1,55 @@
 # app.py — Market Data + News Proxy (cleaned)
 # FastAPI app providing:
-# - Health checks
+# - Health checks (/health and /getHealth)
 # - Twelve Data passthrough: /quote/{symbol}, /sma, /time_series
 # - Finnhub company news: /news/company
 # - Combined summary: /combined/summary
-# - Serve /openapi.yaml for GPT Action import
+# - Minimal OpenAPI JSON for GPT Actions import: /oas.min.json
+# - (Optional) Serve a static openapi.yaml from your repo root
 
 import os
-import math
 from datetime import datetime, timezone, date, timedelta
-
 import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 # -------------------- Config & App --------------------
 
-app = FastAPI(title="Market Data + News Proxy", version="1.3.1")
+app = FastAPI(title="Market Data + News Proxy", version="1.3.2")
 
-from fastapi.responses import JSONResponse
+TD_BASE = "https://api.twelvedata.com"
+TD_KEY = os.getenv("TWELVEDATA_KEY")
+FINNHUB_KEY = os.getenv("FINNHUB_KEY")
+FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
+SPY_SYMBOL = "SPY"  # benchmark for relative strength
+
+def need_key(env_value: str | None, name: str) -> None:
+    if not env_value:
+        raise HTTPException(status_code=500, detail=f"Missing {name} environment variable")
+
+def _to_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+# -------------------- Health & Root --------------------
 
 @app.get("/health", include_in_schema=False)
 @app.get("/getHealth", include_in_schema=False)  # alias for picky clients
 def health_check():
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "ok"})
 
-from fastapi.responses import JSONResponse
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
+    """Simple liveness endpoint."""
+    return {"ok": True, "docs": "/openapi.yaml", "oas": "/oas.min.json"}
 
-@app.get("/health", include_in_schema=False)
-def health_check():
-    return JSONResponse({"status":"ok"})
-
-from fastapi.responses import JSONResponse
+# -------------------- Minimal OpenAPI (for GPT Actions import) --------------------
 
 @app.get("/oas.min.json", include_in_schema=False)
 def oas_min_json():
+    # Ultra-minimal OpenAPI 3.1.1 with a valid servers URL and one path
     return JSONResponse({
         "openapi": "3.1.1",
         "info": {"title": "MD Proxy MIN", "version": "0.0.3"},
@@ -61,38 +76,10 @@ def oas_min_json():
                 }
             }
         },
-        "components": {"schemas":{}}
+        "components": {"schemas": {}}
     })
-    
-TD_BASE = "https://api.twelvedata.com"
-TD_KEY = os.getenv("TWELVEDATA_KEY")
-FINNHUB_KEY = os.getenv("FINNHUB_KEY")
-FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
-SPY_SYMBOL = "SPY"  # benchmark for relative strength
 
-def need_key(env_value: str | None, name: str) -> None:
-    if not env_value:
-        raise HTTPException(status_code=500, detail=f"Missing {name} environment variable")
-
-def _to_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-# -------------------- Health & Root --------------------
-
-@app.api_route("/", methods=["GET", "HEAD"])
-def root():
-    """Render health probe + simple info."""
-    return {"ok": True, "docs": "/openapi.yaml"}
-
-@app.api_route("/health", methods=["GET", "HEAD"])
-def health():
-    """Simple health check endpoint."""
-    return {"status": "ok"}
-
-# -------------------- Serve openapi.yaml --------------------
+# -------------------- (Optional) Serve a local openapi.yaml --------------------
 
 @app.get("/openapi.yaml")
 def serve_openapi():
@@ -101,7 +88,7 @@ def serve_openapi():
         raise HTTPException(status_code=404, detail="openapi.yaml not found")
     return FileResponse(path, media_type="text/yaml", filename="openapi.yaml")
 
-# -------------------- Quote --------------------
+# -------------------- Twelve Data: Quote --------------------
 
 @app.get("/quote/{symbol}")
 async def quote_by_symbol(symbol: str):
@@ -113,11 +100,8 @@ async def quote_by_symbol(symbol: str):
     except Exception:
         raise HTTPException(status_code=502, detail=r.text[:200])
 
-    # Bubble upstream errors
     if isinstance(data, dict) and data.get("status") == "error":
         raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
-
-    # Sometimes TD returns a list
     if isinstance(data, list) and data:
         data = data[0]
 
@@ -138,7 +122,7 @@ async def quote_by_symbol(symbol: str):
         "timestamp": data.get("datetime") or datetime.now(timezone.utc).isoformat(),
     }
 
-# -------------------- SMA passthrough --------------------
+# -------------------- Twelve Data: SMA passthrough --------------------
 
 @app.get("/sma")
 async def sma(symbol: str, interval: str = "1day", time_period: int = 50, outputsize: int | None = None):
@@ -156,7 +140,7 @@ async def sma(symbol: str, interval: str = "1day", time_period: int = 50, output
         raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
     return JSONResponse(data)
 
-# -------------------- Time Series passthrough --------------------
+# -------------------- Twelve Data: Time Series passthrough --------------------
 
 @app.get("/time_series")
 async def time_series(symbol: str, interval: str = "1day", outputsize: int = 300, order: str = "desc"):
@@ -172,7 +156,7 @@ async def time_series(symbol: str, interval: str = "1day", outputsize: int = 300
         raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
     return JSONResponse(data)
 
-# -------------------- Finnhub Company News --------------------
+# -------------------- Finnhub: Company News --------------------
 
 def _news_item(headline, source, url, published_at, summary=None, ticker=None):
     return {
@@ -193,23 +177,15 @@ async def get_company_news(
     need_key(FINNHUB_KEY, "FINNHUB_KEY")
     to_d = date.today()
     from_d = to_d - timedelta(days=days)
-
-    params = {
-        "symbol": symbol.upper(),
-        "from": from_d.isoformat(),
-        "to": to_d.isoformat(),
-        "token": FINNHUB_KEY,
-    }
+    params = {"symbol": symbol.upper(), "from": from_d.isoformat(), "to": to_d.isoformat(), "token": FINNHUB_KEY}
 
     async with httpx.AsyncClient(timeout=20) as s:
         r = await s.get(FINNHUB_COMPANY_NEWS, params=params)
 
-    # Finnhub returns a list on success, or {error: "..."} on failure
     try:
         data = r.json()
     except Exception:
         raise HTTPException(status_code=502, detail=r.text[:200])
-
     if not isinstance(data, list):
         msg = (isinstance(data, dict) and data.get("error")) or "Unexpected Finnhub response"
         raise HTTPException(status_code=502, detail=f"Finnhub error: {msg}")
@@ -277,7 +253,8 @@ def _fifty_two_week_stats(values):
             closes.append(c)
     if not closes:
         return (None, None, None)
-    window = closes[:252] if len(closes) >= 252 else closes  # TD returns most recent first
+    # Twelve Data returns most recent first
+    window = closes[:252] if len(closes) >= 252 else closes
     hi = max(window)
     lo = min(window)
     last = closes[0]
@@ -379,7 +356,12 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
             async with httpx.AsyncClient(timeout=20) as s:
                 nr = await s.get(
                     FINNHUB_COMPANY_NEWS,
-                    params={"symbol": symbol.upper(), "from": from_d.isoformat(), "to": to_d.isoformat(), "token": FINNHUB_KEY},
+                    params={
+                        "symbol": symbol.upper(),
+                        "from": from_d.isoformat(),
+                        "to": to_d.isoformat(),
+                        "token": FINNHUB_KEY,
+                    },
                 )
             nn = nr.json()
             if isinstance(nn, list):
@@ -411,13 +393,6 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
-
-
-
-
-
-
-
 
 
 
