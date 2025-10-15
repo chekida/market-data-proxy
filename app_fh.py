@@ -6,18 +6,18 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-# -------- settings --------
+# ===== Settings =====
 FH_BASE = "https://finnhub.io/api/v1"
 FH_KEY = os.getenv("FINNHUB_KEY")
 REQUEST_TIMEOUT_SECS = 30
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.75
-CACHE_TTL_SECONDS = 10  # small cache to ease rate limits
+CACHE_TTL_SECONDS = 10  # tiny cache to ease rate limits
 
-# -------- app --------
-app = FastAPI(title="Finnhub Proxy", version="1.0.1")
+# ===== App =====
+app = FastAPI(title="Finnhub Proxy", version="1.1.0")
 
-# keep CORS closed unless you need browser calls
+# keep CORS closed unless you truly need browser calls
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -26,7 +26,7 @@ app.add_middleware(
     allow_headers=[],
 )
 
-# -------- tiny in-memory cache --------
+# ===== Tiny in-memory cache =====
 _cache: Dict[str, Dict[str, Any]] = {}
 def _ck(path: str, params: Dict[str, Any]) -> str:
     items = sorted((k, str(v)) for k, v in params.items() if v is not None)
@@ -34,7 +34,8 @@ def _ck(path: str, params: Dict[str, Any]) -> str:
 
 def _get(k: str) -> Optional[Any]:
     e = _cache.get(k)
-    if not e: return None
+    if not e:
+        return None
     if time.time() - e["ts"] > CACHE_TTL_SECONDS:
         _cache.pop(k, None)
         return None
@@ -43,7 +44,7 @@ def _get(k: str) -> Optional[Any]:
 def _set(k: str, data: Any):
     _cache[k] = {"ts": time.time(), "data": data}
 
-# -------- upstream caller with retries --------
+# ===== Upstream caller with retries =====
 async def fh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     if not FH_KEY:
         raise HTTPException(status_code=500, detail="FINNHUB_KEY env var not configured on server")
@@ -60,7 +61,6 @@ async def fh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 r = await client.get(f"{FH_BASE}/{path}", params=q)
-                # retry on transient issues
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
                     time.sleep(backoff); backoff *= 2; continue
                 if r.status_code >= 400:
@@ -76,31 +76,35 @@ async def fh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
                     time.sleep(backoff); backoff *= 2; continue
                 raise HTTPException(status_code=502, detail=f"Finnhub upstream error: {str(e)}")
 
-# -------- health --------
+# ===== Health =====
 @app.get("/")
 def root():
-    return {
-        "ok": True,
-        "service": "finnhub-proxy",
-        "paths": ["/fh/quote","/fh/candles","/fh/indicator","/fh/profile","/fh/news"]
-    }
+    return {"ok": True, "service": "finnhub-proxy",
+            "paths": ["/fh/quote","/fh/candles","/fh/indicator","/fh/profile","/fh/news"]}
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "finnhub_key_configured": bool(FH_KEY)}
 
-# -------- Finnhub routes (with 'from' alias fixes) --------
+# ===== Finnhub routes =====
+
 @app.get("/fh/quote")
 async def fh_quote(symbol: str = Query(..., min_length=1, max_length=20)):
+    """
+    Real-time quote (Finnhub /quote)
+    """
     return JSONResponse(await fh_get("quote", {"symbol": symbol}))
 
 @app.get("/fh/candles")
 async def fh_candles(
     symbol: str = Query(..., min_length=1, max_length=20),
     resolution: str = Query("D", description="Valid: 1,5,15,30,60,D,W,M"),
-    _from: int = Query(..., alias="from", description="UNIX seconds"),  # alias fixes 'from'
-    to: int = Query(..., description="UNIX seconds")
+    _from: int = Query(..., alias="from", description="UNIX seconds"),
+    to: int = Query(..., description="UNIX seconds"),
 ):
+    """
+    Historical candles (Finnhub /stock/candle)
+    """
     return JSONResponse(await fh_get("stock/candle", {
         "symbol": symbol, "resolution": resolution, "from": _from, "to": to
     }))
@@ -109,22 +113,5 @@ async def fh_candles(
 async def fh_indicator(
     symbol: str = Query(..., min_length=1, max_length=20),
     resolution: str = Query("D"),
-    indicator: str = Query(..., description="rsi, macd, ema, sma, adx, mfi, stoch, bbands, atr, etc."),
-    timeperiod: int = Query(14),
-    **extras
-):
-    params = {"symbol": symbol, "resolution": resolution, "indicator": indicator, "timeperiod": timeperiod}
-    params.update({k: v for k, v in extras.items() if v is not None})
-    return JSONResponse(await fh_get("indicator", params))
-
-@app.get("/fh/profile")
-async def fh_profile(symbol: str = Query(..., min_length=1, max_length=20)):
-    return JSONResponse(await fh_get("stock/profile2", {"symbol": symbol}))
-
-@app.get("/fh/news")
-async def fh_news(
-    symbol: str = Query(..., min_length=1, max_length=20),
-    _from: str = Query(..., alias="from", description="YYYY-MM-DD"),  # alias fixes 'from'
-    to: str = Query(..., description="YYYY-MM-DD")
-):
-    return JSONResponse(await fh_get("company-news", {"symbol": symbol, "from": _from, "to": to}))
+    indicator: str = Query(..., description="rsi, macd, ema, sma, adx, mfi, stoch, bbands, atr, ..."),
+    timeperiod: in
