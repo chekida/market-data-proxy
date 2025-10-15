@@ -20,7 +20,7 @@ def root():
 
 @app.get("/health", include_in_schema=False)
 def health():
-    return {"status": "ok"}
+    return {"status":"ok"}
 
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVEDATA_KEY")
@@ -200,6 +200,7 @@ def oas_min_json():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT","10000")))
+
 
 
 
