@@ -24,13 +24,18 @@ from fastapi.responses import JSONResponse
 def oas_min_json():
     spec = {
         "openapi": "3.0.3",
-        "info": {"title": "Market Data Proxy (MIN)", "version": "0.0.1"},
-        # No "servers" on purpose (editor will use the import URL)
+        "info": {
+            "title": "Market Data Proxy (MIN)",
+            "version": "0.0.1"
+        },
+        "servers": [
+            {"url": "https://market-data-proxy.onrender.com/"}
+        ],
         "paths": {
             "/health": {
                 "get": {
                     "operationId": "getHealth",
-                    "summary": "Health check",
+                    "summary": "Health check endpoint",
                     "responses": {"200": {"description": "OK"}}
                 }
             },
@@ -39,8 +44,12 @@ def oas_min_json():
                     "operationId": "quoteBySymbol",
                     "summary": "Get live quote by symbol",
                     "parameters": [
-                        {"name": "symbol", "in": "path", "required": True,
-                         "schema": {"type": "string"}}
+                        {
+                            "name": "symbol",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"}
+                        }
                     ],
                     "responses": {"200": {"description": "OK"}}
                 }
@@ -48,7 +57,7 @@ def oas_min_json():
         },
         "components": {}
     }
-    return JSONResponse(spec)  # explicit JSON, correct content-type
+    return JSONResponse(spec)
     
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVEDATA_KEY")
@@ -397,6 +406,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
+
 
 
 
