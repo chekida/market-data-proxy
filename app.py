@@ -1,31 +1,132 @@
-# C:\td_proxy\app.py
+# app.py — Market Data + News Proxy (cleaned)
+# FastAPI app providing:
+# - Health checks
+# - Twelve Data passthrough: /quote/{symbol}, /sma, /time_series
+# - Finnhub company news: /news/company
+# - Combined summary: /combined/summary
+# - Serve /openapi.yaml for GPT Action import
+
 import os
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timezone, date, timedelta
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from dotenv import load_dotenv, find_dotenv
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 
-# --- load env key ---
-load_dotenv(find_dotenv(), override=False)
-TD_KEY = os.environ.get("TWELVEDATA_KEY")
-BASE = "https://api.twelvedata.com"
+# -------------------- Config & App --------------------
 
-# --- fastapi app ---
-app = FastAPI(title="My Twelve Data Proxy", version="1.0.0")
+app = FastAPI(title="Market Data + News Proxy", version="1.3.1")
 
-# -------------------- COMPANY NEWS (Finnhub) --------------------
-from datetime import date, timedelta
-import os, httpx
-from fastapi import HTTPException, Query
-
+TD_BASE = "https://api.twelvedata.com"
+TD_KEY = os.getenv("TWELVEDATA_KEY")
 FINNHUB_KEY = os.getenv("FINNHUB_KEY")
 FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
+SPY_SYMBOL = "SPY"  # benchmark for relative strength
 
-def _require_env(val: str | None, name: str):
-    if not val:
+def need_key(env_value: str | None, name: str) -> None:
+    if not env_value:
         raise HTTPException(status_code=500, detail=f"Missing {name} environment variable")
+
+def _to_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+# -------------------- Health & Root --------------------
+
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
+    """Render health probe + simple info."""
+    return {"ok": True, "docs": "/openapi.yaml"}
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
+    """Simple health check endpoint."""
+    return {"status": "ok"}
+
+# -------------------- Serve openapi.yaml --------------------
+
+@app.get("/openapi.yaml")
+def serve_openapi():
+    path = os.path.join(os.path.dirname(_file_), "openapi.yaml")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="openapi.yaml not found")
+    return FileResponse(path, media_type="text/yaml", filename="openapi.yaml")
+
+# -------------------- Quote --------------------
+
+@app.get("/quote/{symbol}")
+async def quote_by_symbol(symbol: str):
+    need_key(TD_KEY, "TWELVEDATA_KEY")
+    async with httpx.AsyncClient(timeout=15) as s:
+        r = await s.get(f"{TD_BASE}/quote", params={"symbol": symbol, "apikey": TD_KEY})
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=r.text[:200])
+
+    # Bubble upstream errors
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
+
+    # Sometimes TD returns a list
+    if isinstance(data, list) and data:
+        data = data[0]
+
+    price = data.get("price") or data.get("close")
+    try:
+        price = float(price) if price is not None else None
+    except Exception:
+        price = None
+
+    return {
+        "symbol": (data.get("symbol") or symbol).upper(),
+        "name": data.get("name"),
+        "price": price,
+        "currency": data.get("currency"),
+        "change": float(data.get("change")) if data.get("change") else None,
+        "percent_change": float(data.get("percent_change")) if data.get("percent_change") else None,
+        "volume": float(data.get("volume")) if data.get("volume") else None,
+        "timestamp": data.get("datetime") or datetime.now(timezone.utc).isoformat(),
+    }
+
+# -------------------- SMA passthrough --------------------
+
+@app.get("/sma")
+async def sma(symbol: str, interval: str = "1day", time_period: int = 50, outputsize: int | None = None):
+    need_key(TD_KEY, "TWELVEDATA_KEY")
+    params = {"symbol": symbol, "interval": interval, "time_period": time_period, "apikey": TD_KEY}
+    if outputsize:
+        params["outputsize"] = outputsize
+    async with httpx.AsyncClient(timeout=20) as s:
+        r = await s.get(f"{TD_BASE}/sma", params=params)
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=r.text[:200])
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
+    return JSONResponse(data)
+
+# -------------------- Time Series passthrough --------------------
+
+@app.get("/time_series")
+async def time_series(symbol: str, interval: str = "1day", outputsize: int = 300, order: str = "desc"):
+    need_key(TD_KEY, "TWELVEDATA_KEY")
+    params = {"symbol": symbol, "interval": interval, "outputsize": outputsize, "order": order, "apikey": TD_KEY}
+    async with httpx.AsyncClient(timeout=30) as s:
+        r = await s.get(f"{TD_BASE}/time_series", params=params)
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail=r.text[:200])
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
+    return JSONResponse(data)
+
+# -------------------- Finnhub Company News --------------------
 
 def _news_item(headline, source, url, published_at, summary=None, ticker=None):
     return {
@@ -33,7 +134,7 @@ def _news_item(headline, source, url, published_at, summary=None, ticker=None):
         "headline": headline,
         "source": source,
         "url": url,
-        "published_at": published_at,   # epoch seconds from Finnhub
+        "published_at": published_at,  # epoch seconds from Finnhub
         "summary": summary,
     }
 
@@ -42,10 +143,8 @@ async def get_company_news(
     symbol: str = Query(..., description="Ticker, e.g., AAPL"),
     days: int = Query(3, ge=1, le=14, description="Lookback (1–14 days)")
 ):
-    """
-    Returns recent company headlines from Finnhub in a normalized format.
-    """
-    _require_env(FINNHUB_KEY, "FINNHUB_KEY")
+    """Returns recent company headlines from Finnhub in a normalized format."""
+    need_key(FINNHUB_KEY, "FINNHUB_KEY")
     to_d = date.today()
     from_d = to_d - timedelta(days=days)
 
@@ -79,239 +178,9 @@ async def get_company_news(
             summary=it.get("summary"),
             ticker=symbol.upper(),
         ))
-
-    # 👇 THIS LINE should have exactly 4 spaces of indentation.
-    return out
-
-@app.on_event("startup")
-async def check_key():
-    if TD_KEY:
-        print("✔ TWELVEDATA_KEY loaded")
-    else:
-        print("✖ TWELVEDATA_KEY missing (set it in C:\\td_proxy\\.env or via setx)")
-
-# --- models ---
-class Quote(BaseModel):
-    symbol: str
-    price: float
-    currency: str | None = None
-    change: float | None = None
-    percent_change: float | None = None
-    timestamp: str
-
-# --- helpers ---
-def first_num_from(data: dict, *keys):
-    for k in keys:
-        v = data.get(k)
-        if v not in (None, "", "null"):
-            try:
-                return float(v)
-            except Exception:
-                pass
-    return None
-
-# --- routes ---
-@app.get("/quote/{symbol}", response_model=Quote)
-async def quote(symbol: str):
-    if not TD_KEY:
-        raise HTTPException(status_code=500, detail="Server missing TWELVEDATA_KEY. Set it in .env and restart.")
-
-    params = {"symbol": symbol, "apikey": TD_KEY}
-    async with httpx.AsyncClient(timeout=15) as s:
-        r = await s.get(f"{BASE}/quote", params=params)
-
-    raw_text = r.text
-    try:
-        data = r.json()
-    except Exception:
-        raise HTTPException(status_code=502, detail=f"Upstream non-JSON: {raw_text[:200]}")
-
-    # Bubble up Twelve Data error payloads
-    if isinstance(data, dict) and data.get("status") == "error":
-        raise HTTPException(status_code=502, detail=f"Twelve Data error: {data.get('message')}")
-
-    # Normalize price fields
-    price = first_num_from(data, "price", "close", "last", "previous_close")
-    change = first_num_from(data, "change")
-    percent_change = first_num_from(data, "percent_change")
-
-    # Compute percent_change if missing and we can
-    if percent_change is None and change is not None:
-        prev = first_num_from(data, "previous_close")
-        if prev:
-            try:
-                percent_change = (change / prev) * 100.0
-            except Exception:
-                percent_change = None
-
-    if price is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No price-like field for {symbol}. Keys: {list(data.keys())[:20]}"
-        )
-
-    return Quote(
-        symbol=symbol.upper(),
-        price=price,
-        currency=data.get("currency"),
-        change=change,
-        percent_change=percent_change,
-        timestamp=datetime.now(timezone.utc).isoformat()
-    )
-
-# Optional raw passthrough for debugging
-@app.get("/raw/{symbol}")
-async def raw(symbol: str):
-    if not TD_KEY:
-        raise HTTPException(status_code=500, detail="Server missing TWELVEDATA_KEY.")
-    params = {"symbol": symbol, "apikey": TD_KEY}
-    async with httpx.AsyncClient(timeout=15) as s:
-        r = await s.get(f"{BASE}/quote", params=params)
-    ct = r.headers.get("content-type", "")
-    if "application/json" in ct:
-        return {"status_code": r.status_code, "json": r.json()}
-    return {"status_code": r.status_code, "text": r.text[:500]}
-
-from fastapi.responses import FileResponse
-
-@app.get("/openapi.yaml")
-async def openapi_yaml():
-    return FileResponse("openapi.yaml", media_type="text/yaml")
-# app.py
-import os, httpx
-from datetime import datetime, timezone, date, timedelta
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
-
-app = FastAPI(title="Market Data + News Proxy", version="1.3.0")
-
-TD_BASE = "https://api.twelvedata.com"
-TD_KEY = os.getenv("TWELVEDATA_KEY")
-FINNHUB_KEY = os.getenv("FINNHUB_KEY")
-FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
-
-def need_key(env, name):
-    if not env:
-        raise HTTPException(status_code=500, detail=f"Missing {name} environment variable")
-
-@app.get("/")           # optional
-def root(): return {"ok": True, "docs": "/openapi.yaml"}
-
-@app.get("/openapi.yaml")
-def serve_openapi():
-    path = os.path.join(os.path.dirname(_file_), "openapi.yaml")
-    if not os.path.exists(path): raise HTTPException(404, "openapi.yaml not found")
-    return FileResponse(path, media_type="text/yaml", filename="openapi.yaml")
-
-# -------- QUOTE
-@app.get("/quote/{symbol}")
-async def quote_by_symbol(symbol: str):
-    need_key(TD_KEY, "TWELVEDATA_KEY")
-    async with httpx.AsyncClient(timeout=15) as s:
-        r = await s.get(f"{TD_BASE}/quote", params={"symbol": symbol, "apikey": TD_KEY})
-    try:
-        data = r.json()
-    except Exception:
-        raise HTTPException(502, r.text[:200])
-    if isinstance(data, dict) and data.get("status") == "error":
-        raise HTTPException(502, f"Twelve Data error: {data.get('message')}")
-    if isinstance(data, list) and data:
-        data = data[0]
-    price = data.get("price") or data.get("close")
-    try: price = float(price) if price is not None else None
-    except: price = None
-    return {
-        "symbol": data.get("symbol") or symbol.upper(),
-        "name": data.get("name"),
-        "price": price,
-        "currency": data.get("currency"),
-        "change": float(data.get("change")) if data.get("change") else None,
-        "percent_change": float(data.get("percent_change")) if data.get("percent_change") else None,
-        "volume": float(data.get("volume")) if data.get("volume") else None,
-        "timestamp": data.get("datetime") or datetime.now(timezone.utc).isoformat(),
-    }
-
-# -------- SMA passthrough
-@app.get("/sma")
-async def sma(symbol: str, interval: str = "1day", time_period: int = 50, outputsize: int | None = None):
-    need_key(TD_KEY, "TWELVEDATA_KEY")
-    params = {"symbol": symbol, "interval": interval, "time_period": time_period, "apikey": TD_KEY}
-    if outputsize: params["outputsize"] = outputsize
-    async with httpx.AsyncClient(timeout=20) as s:
-        r = await s.get(f"{TD_BASE}/sma", params=params)
-    try: data = r.json()
-    except Exception: raise HTTPException(502, r.text[:200])
-    if isinstance(data, dict) and data.get("status") == "error":
-        raise HTTPException(502, f"Twelve Data error: {data.get('message')}")
-    return JSONResponse(data)
-
-# -------- TIME SERIES passthrough
-@app.get("/time_series")
-async def time_series(symbol: str, interval: str = "1day", outputsize: int = 300, order: str = "desc"):
-    need_key(TD_KEY, "TWELVEDATA_KEY")
-    params = {"symbol": symbol, "interval": interval, "outputsize": outputsize, "order": order, "apikey": TD_KEY}
-    async with httpx.AsyncClient(timeout=30) as s:
-        r = await s.get(f"{TD_BASE}/time_series", params=params)
-    try: data = r.json()
-    except Exception: raise HTTPException(502, r.text[:200])
-    if isinstance(data, dict) and data.get("status") == "error":
-        raise HTTPException(502, f"Twelve Data error: {data.get('message')}")
-    return JSONResponse(data)
-
-# -------- FINNHUB company news (normalized)
-@app.get("/news/company")
-async def news_company(symbol: str = Query(..., description="e.g., AAPL"),
-                       days: int = Query(3, ge=1, le=14)):
-    need_key(FINNHUB_KEY, "FINNHUB_KEY")
-    to_d, from_d = date.today(), date.today() - timedelta(days=days)
-    params = {"symbol": symbol.upper(), "from": from_d.isoformat(), "to": to_d.isoformat(), "token": FINNHUB_KEY}
-    async with httpx.AsyncClient(timeout=20) as s:
-        r = await s.get(FINNHUB_COMPANY_NEWS, params=params)
-    try: data = r.json()
-    except Exception: raise HTTPException(502, r.text[:200])
-    if not isinstance(data, list):
-        msg = (isinstance(data, dict) and data.get("error")) or str(data)[:200]
-        raise HTTPException(502, f"Finnhub error: {msg}")
-    out = []
-    for it in data:
-        out.append({
-            "ticker": symbol.upper(),
-            "headline": it.get("headline"),
-            "source": it.get("source"),
-            "url": it.get("url"),
-            "published_at": it.get("datetime"),  # epoch seconds
-            "summary": it.get("summary"),
-        })
     return out
-from fastapi import Response
 
-# -------------------- HEALTH & ROOT CHECKS --------------------
-
-# Handles both GET and HEAD on the root path (used by Render)
-@app.api_route("/", methods=["GET", "HEAD"])
-def root():
-    """
-    Root endpoint for Render health checks and basic service info.
-    """
-    return {"ok": True, "docs": "/openapi.yaml"}
-
-# Dedicated health endpoint for uptime monitoring
-@app.api_route("/health", methods=["GET", "HEAD"])
-def health():
-    """
-    Simple health check endpoint to confirm service is running.
-    """
-    return {"status":"ok"}                           
-# -------- COMBINED SUMMARY (one call: quote + SMA50/200 + ATR + 52w + RS vs SPY + news)
-import math
-
-SPY_SYMBOL = "SPY"  # benchmark for RS
-
-def _to_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
+# -------------------- Helpers for Combined Summary --------------------
 
 def _rolling_sma(vals, window):
     if len(vals) < window:
@@ -325,9 +194,8 @@ def _atr14_from_ohlc(values):
     """
     if not values or len(values) < 15:
         return (None, None)
-    # Ascending by datetime to compute true range correctly
     try:
-        ordered = sorted(values, key=lambda v: v["datetime"])
+        ordered = sorted(values, key=lambda v: v["datetime"])  # oldest -> newest
     except Exception:
         ordered = values[:]
     rows = []
@@ -363,8 +231,7 @@ def _fifty_two_week_stats(values):
             closes.append(c)
     if not closes:
         return (None, None, None)
-    # Twelve Data usually returns most recent first; take up to last 252
-    window = closes[:252] if len(closes) >= 252 else closes
+    window = closes[:252] if len(closes) >= 252 else closes  # TD returns most recent first
     hi = max(window)
     lo = min(window)
     last = closes[0]
@@ -385,26 +252,31 @@ def _rs_scores_vs_spy(values_sym, values_spy):
             if c is not None:
                 out.append(c)
         return out
+
     ct = closes(values_sym)
     cs = closes(values_spy)
     if len(ct) < 64 or len(cs) < 64:
         return (None, None)
-    # Most recent first assumed
+
     def ret_n(lst, n):
         try:
             return _pct_change(lst[0], lst[n])
         except Exception:
             return None
+
     r1_t, r3_t = ret_n(ct, 21), ret_n(ct, 63)
     r1_s, r3_s = ret_n(cs, 21), ret_n(cs, 63)
     rs1 = (r1_t - r1_s) if (r1_t is not None and r1_s is not None) else None
     rs3 = (r3_t - r3_s) if (r3_t is not None and r3_s is not None) else None
     return (rs1, rs3)
 
+# -------------------- Combined Summary --------------------
+
 @app.get("/combined/summary")
 async def combined_summary(symbol: str, interval: str = "1day", outputsize: int = 300):
-    # 1) Quote
     need_key(TD_KEY, "TWELVEDATA_KEY")
+
+    # 1) Quote
     async with httpx.AsyncClient(timeout=15) as s:
         qr = await s.get(f"{TD_BASE}/quote", params={"symbol": symbol, "apikey": TD_KEY})
     try:
@@ -460,7 +332,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
             from_d = to_d - timedelta(days=3)
             async with httpx.AsyncClient(timeout=20) as s:
                 nr = await s.get(
-                    "https://finnhub.io/api/v1/company-news",
+                    FINNHUB_COMPANY_NEWS,
                     params={"symbol": symbol.upper(), "from": from_d.isoformat(), "to": to_d.isoformat(), "token": FINNHUB_KEY},
                 )
             nn = nr.json()
@@ -492,11 +364,4 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "rs_3m_vs_spy": rs3,
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
-        }
-
-
-
-
-
-
-
+    }
