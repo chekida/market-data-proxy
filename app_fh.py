@@ -15,7 +15,7 @@ INITIAL_BACKOFF = 0.75
 CACHE_TTL_SECONDS = 10  # tiny cache to ease rate limits
 
 # ===== App =====
-app = FastAPI(title="Finnhub Proxy", version="1.1.0")
+app = FastAPI(title="Finnhub Proxy", version="1.1.1")
 
 # keep CORS closed unless you truly need browser calls
 app.add_middleware(
@@ -79,8 +79,11 @@ async def fh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
 # ===== Health =====
 @app.get("/")
 def root():
-    return {"ok": True, "service": "finnhub-proxy",
-            "paths": ["/fh/quote","/fh/candles","/fh/indicator","/fh/profile","/fh/news"]}
+    return {
+        "ok": True,
+        "service": "finnhub-proxy",
+        "paths": ["/fh/quote","/fh/candles","/fh/indicator","/fh/profile","/fh/news"]
+    }
 
 @app.get("/healthz")
 def healthz():
@@ -119,10 +122,27 @@ async def fh_indicator(
 ):
     """
     Technical indicator (Finnhub /indicator)
-    Pass extra params as query args, e.g., fastperiod, slowperiod, signalperiod, nbdevup, nbdevdn...
+    - We accept arbitrary query params and forward them to Finnhub,
+      but we ignore the placeholder param 'extras' and any empty/defaults.
+    - Example: fastperiod=12&slowperiod=26&signalperiod=9 for MACD
     """
-    params = {"symbol": symbol, "resolution": resolution, "indicator": indicator, "timeperiod": timeperiod}
-    params.update({k: v for k, v in extras.items() if v is not None})
+    # Drop placeholder/empty params some tools send
+    sanitized = {}
+    for k, v in extras.items():
+        if k == "extras":
+            continue
+        if v in (None, "", "default"):
+            continue
+        sanitized[k] = v
+
+    params = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "indicator": indicator,
+        "timeperiod": timeperiod,
+    }
+    params.update(sanitized)
+
     return JSONResponse(await fh_get("indicator", params))
 
 @app.get("/fh/profile")
