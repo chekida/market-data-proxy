@@ -17,6 +17,35 @@ from fastapi.responses import JSONResponse, FileResponse
 
 app = FastAPI(title="Market Data + News Proxy", version="1.3.2")
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+# Bullet-proof health (accept GET/HEAD/POST) on BOTH paths:
+@app.api_route("/health", methods=["GET", "HEAD", "POST"], include_in_schema=False)
+@app.api_route("/getHealth", methods=["GET", "HEAD", "POST"], include_in_schema=False)
+def health_check():
+    return JSONResponse({"status": "ok", "ts": _import_("datetime").datetime.utcnow().isoformat()})
+
+# Route lister (to verify the app actually has /health mounted)
+@app.get("/debug/routes", include_in_schema=False)
+def list_routes():
+    return [{"path": r.path, "methods": sorted(r.methods)} for r in app.routes]
+
+# Echo request (to see what the connector sends)
+@app.api_route("/debug/echo", methods=["GET", "POST", "HEAD"], include_in_schema=False)
+async def echo(req: Request):
+    body = None
+    try:
+        body = await req.json()
+    except Exception:
+        pass
+    return JSONResponse({
+        "method": req.method,
+        "url": str(req.url),
+        "headers": dict(req.headers),
+        "body": body
+    })
+
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVEDATA_KEY")
 FINNHUB_KEY = os.getenv("FINNHUB_KEY")
@@ -393,6 +422,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
+
 
 
 
