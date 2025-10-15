@@ -364,4 +364,5 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "rs_3m_vs_spy": rs3,
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
-    }
+    }
+
