@@ -20,6 +20,12 @@ app = FastAPI(title="Market Data + News Proxy", version="1.3.1")
 
 from fastapi.responses import JSONResponse
 
+@app.get("/health", include_in_schema=False)
+def health_check():
+    return JSONResponse({"status": "ok"})
+
+from fastapi.responses import JSONResponse
+
 @app.get("/oas.min.json", include_in_schema=False)
 def oas_min_json():
     return JSONResponse({
@@ -398,6 +404,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
+
 
 
 
