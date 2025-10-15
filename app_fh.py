@@ -114,4 +114,63 @@ async def fh_indicator(
     symbol: str = Query(..., min_length=1, max_length=20),
     resolution: str = Query("D"),
     indicator: str = Query(..., description="rsi, macd, ema, sma, adx, mfi, stoch, bbands, atr, ..."),
-    timeperiod: in
+    timeperiod: int = Query(14),
+    **extras
+):
+    """
+    Technical indicator (Finnhub /indicator)
+    Pass extra params as query args, e.g., fastperiod, slowperiod, signalperiod, nbdevup, nbdevdn...
+    """
+    params = {"symbol": symbol, "resolution": resolution, "indicator": indicator, "timeperiod": timeperiod}
+    params.update({k: v for k, v in extras.items() if v is not None})
+    return JSONResponse(await fh_get("indicator", params))
+
+@app.get("/fh/profile")
+async def fh_profile(symbol: str = Query(..., min_length=1, max_length=20)):
+    """
+    Company profile (Finnhub /stock/profile2)
+    """
+    return JSONResponse(await fh_get("stock/profile2", {"symbol": symbol}))
+
+@app.get("/fh/news")
+async def fh_news(
+    symbol: str = Query(..., min_length=1, max_length=20),
+    _from: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to: str = Query(..., description="YYYY-MM-DD"),
+    limit: int = Query(50, ge=1, le=500, description="Max items to return"),
+    offset: int = Query(0, ge=0, description="Items to skip before returning"),
+    compact: bool = Query(True, description="If true, proxy trims to essential fields"),
+    fields: str = Query("", description="CSV of fields to keep; overrides 'compact'")
+):
+    """
+    Company news (Finnhub /company-news) with server-side pagination/compaction
+    to avoid oversized responses to the Action caller.
+    """
+    data = await fh_get("company-news", {"symbol": symbol, "from": _from, "to": to})
+    items = data if isinstance(data, list) else []
+
+    # slice
+    start = min(offset, max(0, len(items)))
+    end = min(start + limit, len(items))
+    page = items[start:end]
+
+    # field filter
+    if fields:
+        keep = {f.strip() for f in fields.split(",") if f.strip()}
+        def pick(d): return {k: v for k, v in d.items() if k in keep}
+        page = [pick(x) for x in page]
+    elif compact:
+        keep = {"datetime","headline","source","url","summary","image","category","id","related"}
+        def pick(d): return {k: v for k, v in d.items() if k in keep}
+        page = [pick(x) for x in page]
+
+    return JSONResponse({
+        "symbol": symbol,
+        "from": _from,
+        "to": to,
+        "offset": start,
+        "limit": limit,
+        "returned": len(page),
+        "total_estimate": len(items),
+        "items": page
+    })
