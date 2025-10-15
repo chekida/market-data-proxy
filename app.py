@@ -18,6 +18,36 @@ from fastapi.responses import FileResponse, JSONResponse
 
 app = FastAPI(title="Market Data + News Proxy", version="1.3.1")
 
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_json():
+    # Ultra-minimal OpenAPI 3.0.3 that always parses
+    return {
+        "openapi": "3.0.3",
+        "info": {"title": "Market Data Proxy", "version": "0.0.1"},
+        "servers": [{"url": "https://market-data-proxy.onrender.com"}],
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "getHealth",
+                    "summary": "Health check",
+                    "responses": {"200": {"description": "OK"}}
+                }
+            },
+            "/quote/{symbol}": {
+                "get": {
+                    "operationId": "quoteBySymbol",
+                    "summary": "Get live quote by symbol",
+                    "parameters": [
+                        {"name": "symbol", "in": "path", "required": True,
+                         "schema": {"type": "string"}}
+                    ],
+                    "responses": {"200": {"description": "OK"}}
+                }
+            }
+        },
+        "components": {}
+    }
+    
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVEDATA_KEY")
 FINNHUB_KEY = os.getenv("FINNHUB_KEY")
@@ -365,5 +395,6 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
+
 
 
