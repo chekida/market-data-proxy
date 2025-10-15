@@ -48,7 +48,7 @@ def oas_min_json():
                 }
             }
         },
-        "components": {"schemas": {}}
+        "components": {"schemas":{}}
     })
     
 TD_BASE = "https://api.twelvedata.com"
@@ -398,6 +398,7 @@ async def combined_summary(symbol: str, interval: str = "1day", outputsize: int 
         "news": news_out,
         "note": "Computed in-proxy. RS uses ~21/63 trading day differentials vs SPY."
     }
+
 
 
 
