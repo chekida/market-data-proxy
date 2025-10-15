@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 
 @app.get("/health", include_in_schema=False)
 def health_check():
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status":"ok"})
 
 from fastapi.responses import JSONResponse
 
