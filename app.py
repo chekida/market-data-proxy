@@ -16,12 +16,12 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.75  # seconds
 CACHE_TTL_SECONDS = 10  # small TTL to ease rate limits
 
-app = FastAPI(title="TwelveData Proxy", version="1.2.0")
+app = FastAPI(title="TwelveData Proxy", version="1.3.0")
 
-# Optional: lock down CORS (adjust as needed)
+# Optional: keep CORS closed (no browser origins). Add origins only if you truly need them.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],  # keep empty (no browser access needed). Add origins if you must.
+    allow_origins=[],
     allow_credentials=False,
     allow_methods=["GET"],
     allow_headers=[],
@@ -66,13 +66,12 @@ async def forward(path: str, params: Dict[str, Any]) -> JSONResponse:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 r = await client.get(f"{TD_BASE}/{path}", params=clean_params)
-                # retry on rate-limit and server errors
+                # retry on typical transient errors
                 if r.status_code in (429, 500, 502, 503, 504):
                     if attempt < MAX_RETRIES:
                         time.sleep(backoff)
                         backoff *= 2
                         continue
-                # bubble up error body if any error remains
                 if r.status_code >= 400:
                     try:
                         return JSONResponse(status_code=r.status_code, content=r.json())
@@ -91,7 +90,11 @@ async def forward(path: str, params: Dict[str, Any]) -> JSONResponse:
 # ----------- health / root -----------
 @app.get("/")
 def root():
-    return {"ok": True, "service": "twelve-proxy", "paths": ["/quote", "/time_series", "/rsi", "/macd", "/ema"]}
+    return {
+        "ok": True,
+        "service": "twelve-proxy",
+        "paths": ["/quote", "/time_series", "/rsi", "/macd", "/ema", "/bbands", "/atr"]
+    }
 
 @app.get("/healthz")
 def healthz():
@@ -150,6 +153,37 @@ async def ema(
     outputsize: int = Query(120, ge=1, le=5000)
 ):
     return await forward("ema", {
+        "symbol": symbol,
+        "interval": interval,
+        "time_period": time_period,
+        "outputsize": outputsize
+    })
+
+@app.get("/bbands")
+async def bbands(
+    symbol: str = Query(..., min_length=1, max_length=20),
+    interval: str = Query("1day"),
+    time_period: int = Query(20, ge=1, le=300),
+    stddev: float = Query(2.0, ge=0.1, le=10.0),
+    outputsize: int = Query(120, ge=1, le=5000)
+):
+    # Twelve Data typically expects 'stddev' for Bollinger Bands width
+    return await forward("bbands", {
+        "symbol": symbol,
+        "interval": interval,
+        "time_period": time_period,
+        "stddev": stddev,
+        "outputsize": outputsize
+    })
+
+@app.get("/atr")
+async def atr(
+    symbol: str = Query(..., min_length=1, max_length=20),
+    interval: str = Query("1day"),
+    time_period: int = Query(14, ge=1, le=300),
+    outputsize: int = Query(120, ge=1, le=5000)
+):
+    return await forward("atr", {
         "symbol": symbol,
         "interval": interval,
         "time_period": time_period,
