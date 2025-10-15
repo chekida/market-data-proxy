@@ -3,25 +3,15 @@ def openapi_json():
     return {
         "openapi": "3.0.3",
         "info": {"title": "Market Data Proxy", "version": "0.0.1"},
+        "servers": [{"url": "https://market-data-proxy.onrender.com/"}],
         "paths": {
-            "/health": {
-                "get": {
-                    "operationId": "getHealth",
-                    "summary": "Health check",
-                    "responses": {"200": {"description": "OK"}}
-                }
-            },
-            "/quote/{symbol}": {
-                "get": {
-                    "operationId": "quoteBySymbol",
-                    "summary": "Get live quote by symbol",
-                    "parameters": [
-                        {"name": "symbol", "in": "path", "required": True,
-                         "schema": {"type": "string"}}
-                    ],
-                    "responses": {"200": {"description": "OK"}}
-                }
-            }
+            "/health": {"get": {"operationId": "getHealth","summary": "Health check",
+              "responses": {"200": {"description": "OK"}}}},
+            "/quote/{symbol}": {"get": {"operationId": "quoteBySymbol",
+              "summary": "Get live quote by symbol",
+              "parameters": [{"name": "symbol","in": "path","required": True,
+                              "schema": {"type": "string"}}],
+              "responses": {"200": {"description": "OK"}}}}
         },
         "components": {}
     }
