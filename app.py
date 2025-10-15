@@ -13,6 +13,15 @@ import httpx
 
 app = FastAPI(title="Market Data Proxy", version="1.0.0")
 
+# Root + health (safe, minimal)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+def root():
+    return {"ok": True, "service": "market-data-proxy"}
+
+@app.get("/health", include_in_schema=False)
+def health():
+    return {"status": "ok"}
+
 TD_BASE = "https://api.twelvedata.com"
 TD_KEY = os.getenv("TWELVEDATA_KEY")
 
@@ -191,5 +200,6 @@ def oas_min_json():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT","10000")))
+
 
 
