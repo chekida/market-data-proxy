@@ -20,7 +20,8 @@ def get_health():
 def routes():
     return [{"path": r.path, "methods": sorted(list(r.methods))} for r in app.routes]
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT","10000")))
+
 
