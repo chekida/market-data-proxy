@@ -190,4 +190,5 @@ def oas_min_json():
 # (Optional) local dev entrypoint — Render uses the Start Command instead
 if _name_ == "_main_":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT","10000")))
+
