@@ -1,27 +1,193 @@
-@app.get("/openapi.json", include_in_schema=False)
-def openapi_json():
-    return {
-        "openapi": "3.0.3",
-        "info": {"title": "Market Data Proxy", "version": "0.0.1"},
-        "paths": {
-            "/health": {
-                "get": {
-                    "operationId": "getHealth",
-                    "summary": "Health check",
-                    "responses": {"200": {"description": "OK"}}
-                }
-            },
-            "/quote/{symbol}": {
-                "get": {
-                    "operationId": "quoteBySymbol",
-                    "summary": "Get live quote by symbol",
-                    "parameters": [
-                        {"name": "symbol", "in": "path", "required": True,
-                         "schema": {"type": "string"}}
-                    ],
-                    "responses": {"200": {"description": "OK"}}
-                }
-            }
-        },
-        "components": {}
-    }
+openapi: 3.1.0
+info:
+  title: Market Data Proxy API
+  version: 1.0.0
+  description: >
+    A proxy API for market and financial data combining Twelve Data and Finnhub endpoints.
+    Provides stock quotes, SMA, time series, news, and health check routes.
+
+servers:
+  - url: https://market-data-proxy.onrender.com
+
+paths:
+  /quote/{symbol}:
+    get:
+      summary: Get a live stock quote
+      operationId: getQuote
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Stock ticker symbol (e.g., AAPL)
+      responses:
+        '200':
+          description: Successful quote retrieval
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                  price:
+                    type: number
+                  change:
+                    type: number
+                  percent_change:
+                    type: number
+                  volume:
+                    type: number
+        '404':
+          description: Quote not found
+
+  /sma:
+    get:
+      summary: Get simple moving average (SMA)
+      operationId: getSMA
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: interval
+          in: query
+          required: true
+          schema:
+            type: string
+            example: 1day
+        - name: time_period
+          in: query
+          required: true
+          schema:
+            type: integer
+            example: 50
+      responses:
+        '200':
+          description: SMA value returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                  interval:
+                    type: string
+                  time_period:
+                    type: integer
+                  sma:
+                    type: number
+
+  /time_series:
+    get:
+      summary: Get historical time series data
+      operationId: getTimeSeries
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: interval
+          in: query
+          required: true
+          schema:
+            type: string
+            example: 1day
+        - name: outputsize
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 100
+      responses:
+        '200':
+          description: Historical data returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                  interval:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        datetime:
+                          type: string
+                        open:
+                          type: number
+                        high:
+                          type: number
+                        low:
+                          type: number
+                        close:
+                          type: number
+                        volume:
+                          type: number
+
+  /news:
+    get:
+      summary: Get the latest market or company news
+      operationId: getNews
+      parameters:
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+            example: AAPL
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            example: general
+      responses:
+        '200':
+          description: News items returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  articles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        headline:
+                          type: string
+                        source:
+                          type: string
+                        url:
+                          type: string
+                        datetime:
+                          type: string
+                        summary:
+                          type: string
+
+  /health:
+    get:
+      summary: Health check endpoint
+      operationId: getHealth
+      responses:
+        '200':
+          description: API health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
