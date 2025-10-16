@@ -1,41 +1,60 @@
 services:
   - type: cron
     name: premarket-health-check
+    runtime: python
     schedule: "45 11 * * 1-5"
     startCommand: "python runscan.py --task premarket"
+
   - type: cron
     name: market-regime-scan
+    runtime: python
     schedule: "15 13 * * 1-5"
     startCommand: "python runscan.py --task regime"
+
   - type: cron
     name: open-range-breakout
+    runtime: python
     schedule: "30 13 * * 1-5"
     startCommand: "python runscan.py --task breakout"
+
   - type: cron
     name: sector-rs-update
+    runtime: python
     schedule: "30 14 * * 1-5"
     startCommand: "python runscan.py --task sectorrs"
+
   - type: cron
     name: top25-live-signal-scan
+    runtime: python
     schedule: "45 14 * * 1-5"
     startCommand: "python runscan.py --task top25"
+
   - type: cron
     name: midday-recheck
+    runtime: python
     schedule: "0 16 * * 1-5"
     startCommand: "python runscan.py --task midday"
+
   - type: cron
     name: afternoon-refresh
+    runtime: python
     schedule: "30 18 * * 1-5"
     startCommand: "python runscan.py --task refresh"
+
   - type: cron
     name: closing-scan
+    runtime: python
     schedule: "45 19 * * 1-5"
     startCommand: "python runscan.py --task closing"
+
   - type: cron
     name: atr-risk-update
+    runtime: python
     schedule: "10 20 * * 1-5"
     startCommand: "python runscan.py --task atr"
+
   - type: cron
     name: overnight-data-refresh
+    runtime: python
     schedule: "0 0 * * 2-6"
     startCommand: "python runscan.py --task overnight"
