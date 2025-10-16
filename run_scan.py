@@ -1,7 +1,8 @@
 # run_scan.py
 # ------------------------------------------------------------
 # Automated market scanner for Render cron jobs.
-# Uses Twelve Data for price data and Finnhub for news headlines.
+# Twelve Data for price data, Finnhub for news,
+# Discord webhook for alerts, and Google Sheets for logs.
 
 import argparse
 import datetime as dt
@@ -9,22 +10,23 @@ import requests
 import os
 import json
 
-# === CONFIGURATION ===
+# === ENVIRONMENT VARIABLES ===
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_KEY")
 FINNHUB_API_KEY = os.getenv("FINNHUB_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Discord webhook
+SHEETS_WEBAPP_URL = os.getenv("SHEETS_WEBAPP_URL")  # optional Google Apps Script endpoint
 
 TWELVE_URL = "https://api.twelvedata.com/time_series"
 FINNHUB_URL = "https://finnhub.io/api/v1/company-news"
 
 DEFAULT_SYMBOLS = [
     "SPY", "QQQ", "IWM", "NVDA", "AAPL", "MSFT", "TSLA", "META", "AMD",
-    "AVGO", "GOOG", "AMZN", "NFLX", "SMCI", "CRM", "INTC", "NXPI", "SNOW",
-    "SHOP", "TTD"
+    "AVGO", "GOOG", "AMZN", "NFLX", "SMCI", "CRM", "INTC", "NXPI", "SNOW", "SHOP", "TTD"
 ]
 
 # === HELPER FUNCTIONS ===
 def fetch_data(symbol, interval="1day", outputsize=200):
-    """Fetch OHLCV from Twelve Data."""
+    """Fetch OHLCV data from Twelve Data."""
     params = {
         "symbol": symbol,
         "interval": interval,
@@ -56,7 +58,6 @@ def compute_atr(data, n=14):
             continue
     return sum(trs) / len(trs) if trs else None
 
-# === SIGNAL ANALYSIS ===
 def analyze_signal(symbol):
     data = fetch_data(symbol)
     if len(data) < 200:
@@ -69,7 +70,6 @@ def analyze_signal(symbol):
 
     atrpct = (atr / close) * 100 if atr else 0
     signal = "None"
-
     if close > sma50 * 1.02:
         signal = "Breakout"
     elif close > sma50 and close < sma200 * 1.05:
@@ -84,11 +84,45 @@ def analyze_signal(symbol):
         "signal": signal
     }
 
-# === TASK HANDLERS ===
+# === DISCORD WEBHOOK ===
+def post_to_webhook(task_name, payload):
+    """Send scan results to Discord."""
+    if not WEBHOOK_URL:
+        print("[Webhook] No WEBHOOK_URL found — skipping send.", flush=True)
+        return
+    try:
+        short_payload = payload[:5] if isinstance(payload, list) else payload
+        msg = f"📊 **{task_name.capitalize()} Scan Results**\n```json\n{json.dumps(short_payload, indent=2)}```"
+        r = requests.post(WEBHOOK_URL, json={"content": msg}, timeout=10)
+        if r.status_code in (200, 204):
+            print(f"[Webhook] ✅ Sent {task_name} results successfully.", flush=True)
+        else:
+            print(f"[Webhook] ⚠️ Failed ({r.status_code}): {r.text}", flush=True)
+    except Exception as e:
+        print(f"[Webhook] ❌ Error sending message: {e}", flush=True)
+
+# === GOOGLE SHEETS LOGGER (OPTIONAL) ===
+def log_to_google_sheets(task_name, payload):
+    """Push JSON payload to a Google Sheets Apps Script endpoint."""
+    if not SHEETS_WEBAPP_URL:
+        print("[Sheets] No SHEETS_WEBAPP_URL found — skipping log.", flush=True)
+        return
+    try:
+        r = requests.post(SHEETS_WEBAPP_URL, json={"task": task_name, "data": payload}, timeout=10)
+        if r.status_code == 200:
+            print("[Sheets] ✅ Logged successfully.", flush=True)
+        else:
+            print(f"[Sheets] ⚠️ Failed to log: {r.status_code} {r.text}", flush=True)
+    except Exception as e:
+        print(f"[Sheets] ❌ Error logging: {e}", flush=True)
+
+# === TASKS ===
 def task_premarket():
     print("[Premarket] Checking market regime...", flush=True)
     result = {s: analyze_signal(s) for s in ["SPY", "QQQ", "IWM"]}
     print(json.dumps(result, indent=2), flush=True)
+    post_to_webhook("premarket", result)
+    log_to_google_sheets("premarket", result)
     return result
 
 def task_breakout():
@@ -96,9 +130,8 @@ def task_breakout():
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     signals = [s for s in signals if s and s["signal"] == "Breakout"]
     print(json.dumps(signals, indent=2), flush=True)
-    with open("breakout_results.json", "w") as f:
-        json.dump(signals, f, indent=2)
-    print("[Breakout] Results saved to breakout_results.json", flush=True)
+    post_to_webhook("breakout", signals)
+    log_to_google_sheets("breakout", signals)
     return signals
 
 def task_inflection():
@@ -106,14 +139,12 @@ def task_inflection():
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     signals = [s for s in signals if s and s["signal"] == "Inflection"]
     print(json.dumps(signals, indent=2), flush=True)
-    with open("inflection_results.json", "w") as f:
-        json.dump(signals, f, indent=2)
-    print("[Inflection] Results saved to inflection_results.json", flush=True)
+    post_to_webhook("inflection", signals)
+    log_to_google_sheets("inflection", signals)
     return signals
 
 def task_midday():
-    """Midday recheck — confirms ongoing breakouts/inflections."""
-    print("[Midday] Running intraday refresh on Breakout & Inflection signals...", flush=True)
+    print("[Midday] Running intraday refresh...", flush=True)
     signals = []
     for s in DEFAULT_SYMBOLS:
         result = analyze_signal(s)
@@ -121,11 +152,9 @@ def task_midday():
             continue
         if result["signal"] in ("Breakout", "Inflection"):
             signals.append(result)
-    signals = sorted(signals, key=lambda x: -x["close"])[:10]
     print(json.dumps(signals, indent=2), flush=True)
-    with open("midday_results.json", "w") as f:
-        json.dump(signals, f, indent=2)
-    print("[Midday] Results saved to midday_results.json", flush=True)
+    post_to_webhook("midday", signals)
+    log_to_google_sheets("midday", signals)
     return signals
 
 def task_closing():
@@ -133,14 +162,12 @@ def task_closing():
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     leaders = sorted([s for s in signals if s], key=lambda x: -x["close"])[:3]
     print(json.dumps(leaders, indent=2), flush=True)
-    with open("closing_results.json", "w") as f:
-        json.dump(leaders, f, indent=2)
-    print("[Closing] Results saved to closing_results.json", flush=True)
+    post_to_webhook("closing", leaders)
+    log_to_google_sheets("closing", leaders)
     return leaders
 
-# === FINNHUB NEWS ===
 def task_news(symbols=DEFAULT_SYMBOLS[:5]):
-    print("[News] Fetching latest headlines via Finnhub...", flush=True)
+    print("[News] Fetching headlines via Finnhub...", flush=True)
     today = dt.date.today()
     from_date = today - dt.timedelta(days=1)
     news_report = {}
@@ -149,16 +176,12 @@ def task_news(symbols=DEFAULT_SYMBOLS[:5]):
             url = f"{FINNHUB_URL}?symbol={s}&from={from_date}&to={today}&token={FINNHUB_API_KEY}"
             r = requests.get(url, timeout=10)
             stories = r.json()[:3]
-            news_report[s] = [
-                {"headline": n.get("headline"), "source": n.get("source"), "datetime": n.get("datetime")}
-                for n in stories if "headline" in n
-            ]
+            news_report[s] = [{"headline": n.get("headline"), "source": n.get("source")} for n in stories]
         except Exception as e:
             news_report[s] = f"Error fetching news: {e}"
     print(json.dumps(news_report, indent=2), flush=True)
-    with open("news_results.json", "w") as f:
-        json.dump(news_report, f, indent=2)
-    print("[News] Results saved to news_results.json", flush=True)
+    post_to_webhook("news", news_report)
+    log_to_google_sheets("news", news_report)
     return news_report
 
 # === MAIN ROUTER ===
