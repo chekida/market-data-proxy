@@ -5,7 +5,9 @@ services:
     schedule: "45 11 * * 1-5"
     startCommand: "python runscan.py --task premarket"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -14,7 +16,9 @@ services:
     schedule: "15 13 * * 1-5"
     startCommand: "python runscan.py --task regime"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -23,7 +27,9 @@ services:
     schedule: "30 13 * * 1-5"
     startCommand: "python runscan.py --task breakout"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -32,7 +38,9 @@ services:
     schedule: "30 14 * * 1-5"
     startCommand: "python runscan.py --task sectorrs"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -41,7 +49,9 @@ services:
     schedule: "45 14 * * 1-5"
     startCommand: "python runscan.py --task top25"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -50,7 +60,9 @@ services:
     schedule: "0 16 * * 1-5"
     startCommand: "python runscan.py --task midday"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -59,7 +71,9 @@ services:
     schedule: "30 18 * * 1-5"
     startCommand: "python runscan.py --task refresh"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -68,7 +82,9 @@ services:
     schedule: "45 19 * * 1-5"
     startCommand: "python runscan.py --task closing"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -77,7 +93,9 @@ services:
     schedule: "10 20 * * 1-5"
     startCommand: "python runscan.py --task atr"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
 
   - type: cron
@@ -86,5 +104,7 @@ services:
     schedule: "0 0 * * 2-6"
     startCommand: "python runscan.py --task overnight"
     envVars:
-      - key: TWELVE_DATA_API_KEY
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
         sync: false
