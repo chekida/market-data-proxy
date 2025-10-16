@@ -34,9 +34,12 @@ def fetch_data(symbol, interval="1day", outputsize=200):
     try:
         r = requests.get(TWELVE_URL, params=params, timeout=10)
         data = r.json()
-        return data.get("values", [])
+        if "values" not in data:
+            print(f"[{symbol}] API error: {data}", flush=True)
+            return []
+        return data["values"]
     except Exception as e:
-        print(f"[{symbol}] Data fetch error: {e}")
+        print(f"[{symbol}] Fetch error: {e}", flush=True)
         return []
 
 def compute_sma(data, n):
@@ -83,34 +86,63 @@ def analyze_signal(symbol):
 
 # === TASK HANDLERS ===
 def task_premarket():
-    print("[Premarket] Checking market regime...")
+    print("[Premarket] Checking market regime...", flush=True)
     result = {s: analyze_signal(s) for s in ["SPY", "QQQ", "IWM"]}
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2), flush=True)
+    return result
 
 def task_breakout():
-    print("[Breakout] Running breakout scan...")
+    print("[Breakout] Running breakout scan...", flush=True)
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     signals = [s for s in signals if s and s["signal"] == "Breakout"]
-    print(json.dumps(signals, indent=2))
+    print(json.dumps(signals, indent=2), flush=True)
+    with open("breakout_results.json", "w") as f:
+        json.dump(signals, f, indent=2)
+    print("[Breakout] Results saved to breakout_results.json", flush=True)
+    return signals
 
 def task_inflection():
-    print("[Inflection] Identifying trend inflections...")
+    print("[Inflection] Identifying trend inflections...", flush=True)
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     signals = [s for s in signals if s and s["signal"] == "Inflection"]
-    print(json.dumps(signals, indent=2))
+    print(json.dumps(signals, indent=2), flush=True)
+    with open("inflection_results.json", "w") as f:
+        json.dump(signals, f, indent=2)
+    print("[Inflection] Results saved to inflection_results.json", flush=True)
+    return signals
+
+def task_midday():
+    """Midday recheck — confirms ongoing breakouts/inflections."""
+    print("[Midday] Running intraday refresh on Breakout & Inflection signals...", flush=True)
+    signals = []
+    for s in DEFAULT_SYMBOLS:
+        result = analyze_signal(s)
+        if not result:
+            continue
+        if result["signal"] in ("Breakout", "Inflection"):
+            signals.append(result)
+    signals = sorted(signals, key=lambda x: -x["close"])[:10]
+    print(json.dumps(signals, indent=2), flush=True)
+    with open("midday_results.json", "w") as f:
+        json.dump(signals, f, indent=2)
+    print("[Midday] Results saved to midday_results.json", flush=True)
+    return signals
 
 def task_closing():
-    print("[Closing] Generating RS leaders...")
+    print("[Closing] Generating RS leaders...", flush=True)
     signals = [analyze_signal(s) for s in DEFAULT_SYMBOLS]
     leaders = sorted([s for s in signals if s], key=lambda x: -x["close"])[:3]
-    print(json.dumps(leaders, indent=2))
+    print(json.dumps(leaders, indent=2), flush=True)
+    with open("closing_results.json", "w") as f:
+        json.dump(leaders, f, indent=2)
+    print("[Closing] Results saved to closing_results.json", flush=True)
+    return leaders
 
 # === FINNHUB NEWS ===
 def task_news(symbols=DEFAULT_SYMBOLS[:5]):
-    print("[News] Fetching latest headlines via Finnhub...")
+    print("[News] Fetching latest headlines via Finnhub...", flush=True)
     today = dt.date.today()
     from_date = today - dt.timedelta(days=1)
-
     news_report = {}
     for s in symbols:
         try:
@@ -118,13 +150,37 @@ def task_news(symbols=DEFAULT_SYMBOLS[:5]):
             r = requests.get(url, timeout=10)
             stories = r.json()[:3]
             news_report[s] = [
-                {"headline": n["headline"], "source": n["source"], "datetime": n["datetime"]}
+                {"headline": n.get("headline"), "source": n.get("source"), "datetime": n.get("datetime")}
                 for n in stories if "headline" in n
             ]
         except Exception as e:
             news_report[s] = f"Error fetching news: {e}"
-
-    print(json.dumps(news_report, indent=2))
+    print(json.dumps(news_report, indent=2), flush=True)
+    with open("news_results.json", "w") as f:
+        json.dump(news_report, f, indent=2)
+    print("[News] Results saved to news_results.json", flush=True)
     return news_report
 
-# === MAIN
+# === MAIN ROUTER ===
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run a Twelve Data + Finnhub scan task.")
+    parser.add_argument("--task", required=True, help="Task name: premarket, breakout, inflection, midday, closing, news")
+    args = parser.parse_args()
+
+    task = args.task.lower()
+    print(f"\n=== Executing Task: {task} | {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n", flush=True)
+
+    if task in ["premarket", "regime"]:
+        task_premarket()
+    elif task in ["breakout", "top25", "refresh"]:
+        task_breakout()
+    elif task == "midday":
+        task_midday()
+    elif task == "inflection":
+        task_inflection()
+    elif task in ["closing", "atr", "overnight"]:
+        task_closing()
+    elif task == "news":
+        task_news()
+    else:
+        print(f"Unknown task: {task}", flush=True)
