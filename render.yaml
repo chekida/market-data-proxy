@@ -1,70 +1,90 @@
 services:
   - type: cron
-    name: twelve-data-scanner
-    runtime: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python run_scan.py --task breakout"
-    envVars:
-      - key: e07bdb3e2efb4844ba538a0fc12fad84
-        sync: false # Set manually in Render Dashboard environment variables
-
-  - type: cron
     name: premarket-health-check
     runtime: python
     schedule: "45 11 * * 1-5"
-    startCommand: "python run_scan.py --task premarket"
+    startCommand: "python runscan.py --task premarket"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: market-regime-scan
     runtime: python
     schedule: "15 13 * * 1-5"
-    startCommand: "python run_scan.py --task regime"
+    startCommand: "python runscan.py --task regime"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: open-range-breakout
     runtime: python
     schedule: "30 13 * * 1-5"
-    startCommand: "python run_scan.py --task breakout"
+    startCommand: "python runscan.py --task breakout"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: sector-rs-update
     runtime: python
     schedule: "30 14 * * 1-5"
-    startCommand: "python run_scan.py --task sector_rs"
+    startCommand: "python runscan.py --task sectorrs"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: top25-live-signal-scan
     runtime: python
     schedule: "45 14 * * 1-5"
-    startCommand: "python run_scan.py --task top25"
+    startCommand: "python runscan.py --task top25"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: midday-recheck
     runtime: python
     schedule: "0 16 * * 1-5"
-    startCommand: "python run_scan.py --task midday"
+    startCommand: "python runscan.py --task midday"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: afternoon-refresh
     runtime: python
     schedule: "30 18 * * 1-5"
-    startCommand: "python run_scan.py --task refresh"
+    startCommand: "python runscan.py --task refresh"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: closing-scan
     runtime: python
     schedule: "45 19 * * 1-5"
-    startCommand: "python run_scan.py --task closing"
+    startCommand: "python runscan.py --task closing"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: atr-risk-update
     runtime: python
     schedule: "10 20 * * 1-5"
-    startCommand: "python run_scan.py --task atr"
+    startCommand: "python runscan.py --task atr"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
 
   - type: cron
     name: overnight-data-refresh
     runtime: python
     schedule: "0 0 * * 2-6"
-    startCommand: "python run_scan.py --task overnight"
-
+    startCommand: "python runscan.py --task overnight"
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
