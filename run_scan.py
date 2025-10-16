@@ -10,8 +10,8 @@ import os
 import json
 
 # === CONFIGURATION ===
-TWELVE_DATA_API_KEY = os.getenv("TWELVE_KEY")
-FINNHUB_API_KEY = os.getenv("FINNHUB_KEY")
+TWELVE_KEY = os.getenv("TWELVE_DATA_API_KEY")
+FINNHUB_KEY = os.getenv("FINNHUB_API_KEY")
 
 TWELVE_URL = "https://api.twelvedata.com/time_series"
 FINNHUB_URL = "https://finnhub.io/api/v1/company-news"
