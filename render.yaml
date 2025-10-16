@@ -7,8 +7,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task premarket"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -19,8 +21,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task regime"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -31,8 +35,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task breakout"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -43,8 +49,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task sectorrs"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -55,8 +63,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task top25"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -67,8 +77,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task midday"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -79,8 +91,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task refresh"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -91,8 +105,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task closing"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -103,8 +119,10 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task atr"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
 
   - type: cron
@@ -115,6 +133,8 @@ services:
     startCommand: "/opt/render/project/src/.venv/bin/python run_scan.py --task overnight"
     envVars:
       - key: TWELVE_KEY
+        value: "${TWELVE_KEY_PLACEHOLDER}"
         sync: false
       - key: FINNHUB_KEY
+        value: "${FINNHUB_KEY_PLACEHOLDER}"
         sync: false
