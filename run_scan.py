@@ -10,7 +10,7 @@ import requests
 import json
 
 # === CONFIGURATION ===
-TWELVE_DATA_API_KEY = "YOUR_TWELVE_DATA_API_KEY"
+TWELVE_DATA_API_KEY = "e07bdb3e2efb4844ba538a0fc12fad84"
 BASE_URL = "https://api.twelvedata.com/time_series"
 DEFAULT_SYMBOLS = [
     "SPY", "QQQ", "IWM", "NVDA", "AAPL", "MSFT", "TSLA", "META", "AMD", "AVGO", 
