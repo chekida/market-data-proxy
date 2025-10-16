@@ -2,8 +2,9 @@ services:
   - type: cron
     name: premarket-health-check
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "45 11 * * 1-5"
-    startCommand: "python runscan.py --task premarket"
+    startCommand: "python run_scan.py --task premarket"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -13,8 +14,9 @@ services:
   - type: cron
     name: market-regime-scan
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "15 13 * * 1-5"
-    startCommand: "python runscan.py --task regime"
+    startCommand: "python run_scan.py --task regime"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -24,8 +26,9 @@ services:
   - type: cron
     name: open-range-breakout
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "30 13 * * 1-5"
-    startCommand: "python runscan.py --task breakout"
+    startCommand: "python run_scan.py --task breakout"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -35,8 +38,9 @@ services:
   - type: cron
     name: sector-rs-update
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "30 14 * * 1-5"
-    startCommand: "python runscan.py --task sectorrs"
+    startCommand: "python run_scan.py --task sectorrs"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -46,8 +50,9 @@ services:
   - type: cron
     name: top25-live-signal-scan
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "45 14 * * 1-5"
-    startCommand: "python runscan.py --task top25"
+    startCommand: "python run_scan.py --task top25"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -57,8 +62,9 @@ services:
   - type: cron
     name: midday-recheck
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "0 16 * * 1-5"
-    startCommand: "python runscan.py --task midday"
+    startCommand: "python run_scan.py --task midday"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -68,8 +74,9 @@ services:
   - type: cron
     name: afternoon-refresh
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "30 18 * * 1-5"
-    startCommand: "python runscan.py --task refresh"
+    startCommand: "python run_scan.py --task refresh"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -79,8 +86,9 @@ services:
   - type: cron
     name: closing-scan
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "45 19 * * 1-5"
-    startCommand: "python runscan.py --task closing"
+    startCommand: "python run_scan.py --task closing"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -90,8 +98,9 @@ services:
   - type: cron
     name: atr-risk-update
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "10 20 * * 1-5"
-    startCommand: "python runscan.py --task atr"
+    startCommand: "python run_scan.py --task atr"
     envVars:
       - key: TWELVE_KEY
         sync: false
@@ -101,8 +110,9 @@ services:
   - type: cron
     name: overnight-data-refresh
     runtime: python
+    buildCommand: "pip install -r requirements.txt"
     schedule: "0 0 * * 2-6"
-    startCommand: "python runscan.py --task overnight"
+    startCommand: "python run_scan.py --task overnight"
     envVars:
       - key: TWELVE_KEY
         sync: false
