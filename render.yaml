@@ -1,0 +1,43 @@
+# render-cronjobs.yaml
+# Twelve Data Trading Scan Schedule (EST aligned → UTC for Render)
+
+cronjobs:
+  - name: premarket-health-check
+    schedule: "45 11 * * 1-5"
+    command: "python run_scan.py --task premarket"
+
+  - name: market-regime-scan
+    schedule: "15 13 * * 1-5"
+    command: "python run_scan.py --task regime"
+
+  - name: open-range-breakout
+    schedule: "30 13 * * 1-5"
+    command: "python run_scan.py --task breakout"
+
+  - name: sector-rs-update
+    schedule: "30 14 * * 1-5"
+    command: "python run_scan.py --task sector_rs"
+
+  - name: top25-live-signal-scan
+    schedule: "45 14 * * 1-5"
+    command: "python run_scan.py --task top25"
+
+  - name: midday-recheck
+    schedule: "0 16 * * 1-5"
+    command: "python run_scan.py --task midday"
+
+  - name: afternoon-refresh
+    schedule: "30 18 * * 1-5"
+    command: "python run_scan.py --task refresh"
+
+  - name: closing-scan
+    schedule: "45 19 * * 1-5"
+    command: "python run_scan.py --task closing"
+
+  - name: atr-risk-update
+    schedule: "10 20 * * 1-5"
+    command: "python run_scan.py --task atr"
+
+  - name: overnight-data-refresh
+    schedule: "0 0 * * 2-6"
+    command: "python run_scan.py --task overnight"
