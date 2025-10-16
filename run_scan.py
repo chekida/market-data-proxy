@@ -3,7 +3,8 @@
 # Automated market scanner for Render cron jobs.
 # - Fetches dynamic S&P 500 + Nasdaq 100 tickers
 # - Uses Twelve Data for price data and Finnhub for news
-# - Sends alerts to Discord; optional Google Sheets logging
+# - Sends formatted ChatGPT-style alerts to Discord
+# ------------------------------------------------------------
 
 import argparse
 import datetime as dt
@@ -11,12 +12,17 @@ import requests
 import os
 import json
 import pandas as pd
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 # === ENVIRONMENT VARIABLES ===
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_KEY")
 FINNHUB_API_KEY = os.getenv("FINNHUB_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")               # Discord webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+# Optional rate limit config (defaults to Grow plan)
+PLAN_LIMIT = int(os.getenv("TD_PLAN_LIMIT", 377))   # credits/min
+SAFE_THREADS = max(1, min(10, int(PLAN_LIMIT / 60)))  # auto-scale threads
 
 TWELVE_URL = "https://api.twelvedata.com/time_series"
 FINNHUB_URL = "https://finnhub.io/api/v1/company-news"
@@ -38,7 +44,7 @@ def get_tradable_symbols(limit=300):
     except Exception:
         nasdaq100 = []
 
-    universe = list(dict.fromkeys(sp500 + nasdaq100))  # dedupe, preserve order
+    universe = list(dict.fromkeys(sp500 + nasdaq100))
     if not universe:
         universe = ["AAPL", "MSFT", "NVDA", "AMZN", "META", "TSLA"]
     return universe[:limit]
@@ -102,14 +108,26 @@ def analyze_signal(symbol):
         "signal": signal,
     }
 
+# === FORMATTING HELPERS ===
+def format_signal_table(signals):
+    """Format results into a ChatGPT-style Markdown table."""
+    if not signals:
+        return "⚠️ No active signals."
+    header = "| Ticker | Close | Signal | ATR% | Trend |\n|:--|--:|:--|:--:|:--|\n"
+    rows = []
+    for s in signals[:5]:
+        trend = "🚀 Uptrend" if s["signal"] == "Breakout" else "↗️ Inflection"
+        rows.append(f"| **{s['symbol']}** | {s['close']:.2f} | {s['signal']} | {s['ATRpct']:.2f}% | {trend} |")
+    return header + "\n".join(rows)
+
 # === DISCORD WEBHOOK ===
 def post_to_webhook(task_name, payload):
+    """Send scan results to Discord."""
     if not WEBHOOK_URL:
         print("[Webhook] No WEBHOOK_URL — skipping send.", flush=True)
         return
     try:
-        short_payload = payload[:5] if isinstance(payload, list) else payload
-        msg = f"📊 **{task_name.capitalize()} Scan Results**\n```json\n{json.dumps(short_payload, indent=2)}```"
+        msg = f"📊 **{task_name.capitalize()} Scan Results**\n\n{format_signal_table(payload)}"
         r = requests.post(WEBHOOK_URL, json={"content": msg}, timeout=10)
         if r.status_code in (200, 204):
             print(f"[Webhook] ✅ Sent {task_name} results.", flush=True)
@@ -118,32 +136,18 @@ def post_to_webhook(task_name, payload):
     except Exception as e:
         print(f"[Webhook] ❌ Error sending: {e}", flush=True)
 
-# === GOOGLE SHEETS LOGGER (optional) ===
-def log_to_google_sheets(task_name, payload):
-    if not SHEETS_WEBAPP_URL:
-        return
-    try:
-        r = requests.post(
-            SHEETS_WEBAPP_URL, json={"task": task_name, "data": payload}, timeout=10
-        )
-        if r.status_code == 200:
-            print("[Sheets] ✅ Logged.", flush=True)
-        else:
-            print(f"[Sheets] ⚠️ Failed {r.status_code}: {r.text}", flush=True)
-    except Exception as e:
-        print(f"[Sheets] ❌ Error logging: {e}", flush=True)
-
 # === TASKS ===
-def run_parallel(func, symbols, max_workers=10):
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        return list(ex.map(func, symbols))
+def run_parallel(func, symbols):
+    with ThreadPoolExecutor(max_workers=SAFE_THREADS) as ex:
+        results = list(ex.map(func, symbols))
+    return results
 
 def task_premarket():
     print("[Premarket] Checking regime...", flush=True)
     result = {s: analyze_signal(s) for s in ["SPY", "QQQ", "IWM"]}
     print(json.dumps(result, indent=2), flush=True)
-    post_to_webhook("premarket", result)
-    log_to_google_sheets("premarket", result)
+    post_to_webhook("premarket", [v for v in result.values() if v])
+    print("[Task] ✅ Premarket complete.", flush=True)
     return result
 
 def task_breakout():
@@ -152,7 +156,7 @@ def task_breakout():
     signals = [s for s in results if s and s["signal"] == "Breakout"]
     print(json.dumps(signals, indent=2), flush=True)
     post_to_webhook("breakout", signals)
-    log_to_google_sheets("breakout", signals)
+    print("[Task] ✅ Breakout complete.", flush=True)
     return signals
 
 def task_inflection():
@@ -161,7 +165,7 @@ def task_inflection():
     signals = [s for s in results if s and s["signal"] == "Inflection"]
     print(json.dumps(signals, indent=2), flush=True)
     post_to_webhook("inflection", signals)
-    log_to_google_sheets("inflection", signals)
+    print("[Task] ✅ Inflection complete.", flush=True)
     return signals
 
 def task_midday():
@@ -170,7 +174,7 @@ def task_midday():
     signals = [s for s in results if s and s["signal"] in ("Breakout", "Inflection")]
     print(json.dumps(signals, indent=2), flush=True)
     post_to_webhook("midday", signals)
-    log_to_google_sheets("midday", signals)
+    print("[Task] ✅ Midday complete.", flush=True)
     return signals
 
 def task_closing():
@@ -179,7 +183,7 @@ def task_closing():
     leaders = sorted([s for s in results if s], key=lambda x: -x["close"])[:3]
     print(json.dumps(leaders, indent=2), flush=True)
     post_to_webhook("closing", leaders)
-    log_to_google_sheets("closing", leaders)
+    print("[Task] ✅ Closing complete.", flush=True)
     return leaders
 
 def task_news(symbols=DEFAULT_SYMBOLS[:5]):
@@ -199,8 +203,8 @@ def task_news(symbols=DEFAULT_SYMBOLS[:5]):
         except Exception as e:
             news_report[s] = f"Error fetching: {e}"
     print(json.dumps(news_report, indent=2), flush=True)
-    post_to_webhook("news", news_report)
-    log_to_google_sheets("news", news_report)
+    post_to_webhook("news", [{"symbol": s, "signal": "News", "ATRpct": 0, "close": 0} for s in news_report.keys()])
+    print("[Task] ✅ News complete.", flush=True)
     return news_report
 
 # === MAIN ROUTER ===
