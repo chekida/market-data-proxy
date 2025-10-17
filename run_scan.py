@@ -175,7 +175,8 @@ def post_to_discord(title: str, table_df: pd.DataFrame | None, interpretation: s
         print("[Discord] No webhook defined.")
         return
 
-    ts = datetime.now().strftime("%b %d %Y | %I:%M %p EST")
+    from zoneinfo import ZoneInfo
+    ts = datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
     msg = f"📅 **[{ts}] {title}**\n"
 
     if table_df is not None and not table_df.empty:
