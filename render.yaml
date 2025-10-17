@@ -11,7 +11,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "0715-volatility-scan"
@@ -25,7 +25,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "0815-signal-pass"
@@ -39,7 +39,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "0900-holdings-monitor"
@@ -53,7 +53,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "0930-market-open"
@@ -67,7 +67,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "1030-stop-health"
@@ -81,7 +81,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "1200-midday-refresh"
@@ -95,7 +95,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "1330-sentiment-check"
@@ -109,7 +109,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "1530-powerhour-review"
@@ -123,7 +123,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "1615-eod-recap"
@@ -137,7 +137,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "hourly-holdings-continuous"
@@ -151,7 +151,7 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
 
   - type: cron
     name: "fri1700-portfolio-review"
@@ -165,4 +165,4 @@ services:
       - key: FINNHUB_KEY
         sync: false
       - key: WEBHOOK_URL
-        value: "${WEBHOOK_URL}"
+        sync: false
