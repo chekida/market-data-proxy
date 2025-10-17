@@ -41,8 +41,6 @@ CACHE = {"timestamp": None, "data": {}}
 # =============================================================
 # 🕒 TIMESTAMP UTILITIES
 # =============================================================
-from datetime import datetime
-import pytz
 
 def get_est_timestamp():
     """Return a human-readable timestamp string in US/Eastern time."""
