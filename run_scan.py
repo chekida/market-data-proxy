@@ -69,9 +69,12 @@ def get_cached_data(symbols: list[str]) -> dict:
     global CACHE
     from datetime import datetime, timedelta, timezone
 
+    from datetime import datetime, timedelta, timezone
+
     now = datetime.now(timezone.utc)
     if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
-    return CACHE["data"]
+        return CACHE["data"]
+
 
 
     fresh_data = {}
