@@ -1,4 +1,17 @@
 services:
+  # 🌐 Dependency Anchor Web Service
+  - type: web
+    name: dependency-anchor
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    plan: free
+    envVars:
+      - key: TWELVE_KEY
+        sync: false
+      - key: FINNHUB_KEY
+        sync: false
+
   # 🕒 07:00 AM – Pre-Market Prep
   - type: cron
     name: "0700-premarket-prep"
