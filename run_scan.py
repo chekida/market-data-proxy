@@ -342,11 +342,11 @@ def main():
     if not func:
         print(f"Unknown task: {task_name}")
         sys.exit(1)
-    print(f"[{datetime.now()}] Running task: {task_name}")
+    print(f"[{get_est_timestamp()}] Running task: {task_name}")
     try:
         func()
     except Exception as e:
         print(f"Error in {task_name}: {e}")
 
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
