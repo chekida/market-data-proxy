@@ -357,9 +357,57 @@ def task_powerhour_review():
                     "Prepare for EOD recap and weekly rotations.")
 
 def task_recap_log():
-    post_to_discord("End-of-Day Recap", None,
-                    "Summarized RS confidence delta and performance metrics.",
-                    "Carry forward updated risk posture to next session.")
+    """End-of-Day performance recap with RS₁₀ rotation summary and technical overview."""
+
+    from datetime import datetime
+    print(f"[{datetime.now()}] Running task: recap_log")
+
+    results = []
+    rs_scores = {}
+
+    for h in HOLDINGS:
+        symbol = h["symbol"]
+        avg_cost = h["avg"]
+
+        try:
+            data = fetch_data(symbol)
+            last = data["close"].iloc[0]
+            prev = data["close"].iloc[1]
+            gain_today = (last - prev) / prev * 100
+            gain_total = (last - avg_cost) / avg_cost * 100
+            rs10 = compute_rs(symbol, window=10)
+            rs_scores[symbol] = rs10
+
+            results.append([
+                symbol, round(last, 2), f"{gain_today:+.2f}%", f"{gain_total:+.1f}%", rs10
+            ])
+        except Exception as e:
+            print(f"[Error] {symbol}: {e}")
+
+    dfout = pd.DataFrame(
+        results,
+        columns=["Symbol", "Last", "Today %", "Total %", "RS₁₀"]
+    ).sort_values("RS₁₀", ascending=False)
+
+    # === RS rotation summary ===
+    sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
+    improving = [s for s, r in sorted_rs[:3]]
+    weakening = [s for s, r in sorted_rs[-3:]]
+
+    rotation_msg = f"🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
+
+    # === Summary stats ===
+    avg_gain = dfout["Today %"].apply(lambda x: float(x.strip('%'))).mean()
+    interp = f"Portfolio daily change avg: {avg_gain:+.2f}%"
+    sugg = "Leaders show strength; monitor laggards for support tests."
+
+    post_to_discord(
+        "End-of-Day Recap + RS₁₀ Summary",
+        dfout,
+        f"{interp}\n{rotation_msg}",
+        sugg,
+        market_bias=True
+    )
 
 def task_holdings_continuous():
     task_holdings_monitor()  # reuse same logic hourly
