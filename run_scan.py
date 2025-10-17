@@ -63,6 +63,91 @@ HOLDINGS = [
     {"symbol": "RKLB", "desc": "Rocket Lab", "qty": 100, "avg": 58.36},
     {"symbol": "TSM", "desc": "Taiwan Semiconductor", "qty": 100, "avg": 155.21},
 ]
+# =============================================================
+# 🧩 MARKET UNIVERSE LOADER
+# =============================================================
+CACHE_FILE = "market_universe.json"
+
+def load_market_universe():
+    """
+    Dynamically load S&P 500 + Nasdaq 100 tickers via Twelve Data API.
+    Liquidity filter: 10-day average volume ≥ 1 M shares.
+    Cache refreshes once per trading day (first 07:00 AM run).
+    """
+    key = os.getenv("TWELVE_KEY")
+    today = datetime.date.today()
+
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                cached = json.load(f)
+            if cached.get("date") == str(today):
+                print(f"[Universe] Using cached list ({len(cached['symbols'])} tickers) for {today}.")
+                return cached["symbols"]
+        except Exception as e:
+            print(f"[Universe] Cache read failed: {e}")
+
+    tickers = set()
+    try:
+        res = requests.get(
+            f"https://api.twelvedata.com/stocks?country=United%20States&index=SPX&apikey={key}",
+            timeout=10,
+        ).json()
+        if "data" in res:
+            tickers.update([t["symbol"] for t in res["data"] if t.get("symbol")])
+    except Exception as e:
+        print(f"[Universe] SP500 load failed: {e}")
+
+    try:
+        res = requests.get(
+            f"https://api.twelvedata.com/stocks?country=United%20States&index=NDX&apikey={key}",
+            timeout=10,
+        ).json()
+        if "data" in res:
+            tickers.update([t["symbol"] for t in res["data"] if t.get("symbol")])
+    except Exception as e:
+        print(f"[Universe] NASDAQ load failed: {e}")
+
+    if not tickers:
+        tickers = {
+            "AAPL", "MSFT", "NVDA", "GOOG", "META", "AMZN", "TSLA", "TSM",
+            "AVGO", "LLY", "UNH", "JPM", "JNJ", "V", "MA", "HD", "PG", "XOM", "COST", "ORCL"
+        }
+        print("[Universe] Using fallback list (20 symbols).")
+
+    print(f"[Universe] Pulled {len(tickers)} tickers before filtering.")
+
+    filtered = []
+    for symbol in tickers:
+        try:
+            url = (
+                f"https://api.twelvedata.com/time_series?"
+                f"symbol={symbol}&interval=1day&outputsize=10&apikey={key}"
+            )
+            data = requests.get(url, timeout=8).json()
+            if "values" not in data:
+                continue
+            df = pd.DataFrame(data["values"])
+            df["volume"] = df["volume"].astype(float)
+            if df["volume"].mean() >= 1_000_000:
+                filtered.append(symbol)
+        except Exception:
+            continue
+
+    print(f"[Universe] Filtered to {len(filtered)} liquid symbols.")
+
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"date": str(today), "symbols": sorted(filtered)}, f)
+        print(f"[Universe] Cached universe for {today}.")
+    except Exception as e:
+        print(f"[Universe] Cache save failed: {e}")
+
+    return sorted(filtered)
+
+
+# Initialize once when the script starts (used by all tasks)
+MARKET_UNIVERSE = load_market_universe()
 
 # =============================================================
 # 🕒 CACHING LAYER
@@ -173,31 +258,132 @@ def market_bias_func() -> tuple[str, float]:
         print(f"[Market Bias] Error: {e}")
         return "Neutral", 0.0
 
+def compute_relative_strength(symbol: str, period: int = 10) -> float:
+    """Compute RS (relative strength) vs SPY over N days."""
+    try:
+        df_sym = fetch_data(symbol)
+        df_spy = fetch_data("SPY")
+        if df_sym.empty or df_spy.empty:
+            return 0.0
+        df = pd.merge(
+            df_sym[["datetime", "close"]],
+            df_spy[["datetime", "close"]],
+            on="datetime",
+            suffixes=("_sym", "_spy")
+        ).sort_values("datetime", ascending=False)
+        if len(df) <= period:
+            return 0.0
+        pct_sym = (df["close_sym"].iloc[0] - df["close_sym"].iloc[period]) / df["close_sym"].iloc[period]
+        pct_spy = (df["close_spy"].iloc[0] - df["close_spy"].iloc[period]) / df["close_spy"].iloc[period]
+        return round((pct_sym - pct_spy) * 100, 2)
+    except Exception as e:
+        print(f"[RS] {symbol} RS error: {e}")
+        return 0.0
+
+
+def get_volume_ratio(symbol: str) -> float:
+    """Compare current volume to recent 20-bar average."""
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=40&apikey={TWELVE_API_KEY}"
+        r = requests.get(url, timeout=8).json()
+        if "values" not in r:
+            return 1.0
+        df = pd.DataFrame(r["values"])
+        df["volume"] = df["volume"].astype(float)
+        if len(df) < 20:
+            return 1.0
+        curr_vol = df["volume"].iloc[0]
+        avg_vol = df["volume"].iloc[1:21].mean()
+        return round(curr_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+    except Exception as e:
+        print(f"[VolRatio] Error {symbol}: {e}")
+        return 1.0
+
+
+def compute_atr(symbol: str, period: int = 14) -> float:
+    """Compute ATR for a symbol."""
+    try:
+        df = fetch_data(symbol)
+        if df.empty or len(df) < period + 1:
+            return 0.0
+        high, low, close = df["high"], df["low"], df["close"]
+        tr = np.maximum(high - low, np.maximum(abs(high - close.shift(-1)), abs(low - close.shift(-1))))
+        return round(tr.iloc[:period].mean(), 2)
+    except Exception as e:
+        print(f"[ATR] Error {symbol}: {e}")
+        return 0.0
+
+
+def get_orh60(symbol: str) -> float:
+    """Get first-hour high (ORH60) from hourly data."""
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1h&outputsize=8&apikey={TWELVE_API_KEY}"
+        r = requests.get(url, timeout=8).json()
+        if "values" not in r:
+            return 0.0
+        df = pd.DataFrame(r["values"])
+        df["high"] = df["high"].astype(float)
+        return float(df["high"].iloc[-1])
+    except Exception as e:
+        print(f"[ORH60] Error {symbol}: {e}")
+        return 0.0
+
+
 # =============================================================
 # 💬 DISCORD OUTPUT
 # =============================================================
-def post_to_discord(title: str, table_df: pd.DataFrame | None, interpretation: str, suggestions: str, market_bias: bool = False):
+def post_to_discord(
+    title: str,
+    table_data: pd.DataFrame | str | None,
+    interpretation: str,
+    suggestions: str,
+    footer: str | None = None,
+    market_bias: bool = False,
+    emoji: str = "📈"
+):
+    """
+    Unified Discord output.
+    Supports DataFrames, Markdown tables, or plain strings.
+    Adds timestamp, emoji header, interpretation, suggestion, and optional bias summary.
+    """
     if not WEBHOOK_URL:
         print("[Discord] No webhook defined.")
         return
+
+    # --- Header timestamp ---
     ts = datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
-    msg = f"📅 [{ts}] {title}\n"
-    if table_df is not None and not table_df.empty:
-        msg += "\n" + table_df.to_string(index=False) + "\n\n"
-    msg += f"💬 Interpretation: {interpretation}\n"
-    msg += f"💡 Suggestion: {suggestions}\n"
-    if "RS₁₀" in interpretation:
-        msg += "(Rotation summary reflects short-term RS₁₀ trends vs SPY)\n"
+    msg = f"{emoji} **[{ts}] {title}**\n"
+
+    # --- Format table or text body ---
+    if table_data is not None:
+        if isinstance(table_data, pd.DataFrame):
+            if not table_data.empty:
+                msg += "```\n" + table_data.to_string(index=False)[:3800] + "\n```\n"
+        elif isinstance(table_data, str):
+            msg += table_data.strip() + "\n\n"
+
+    # --- Interpretation + suggestion ---
+    msg += f"💬 *Interpretation:* {interpretation}\n"
+    msg += f"💡 *Suggestion:* {suggestions}\n"
+
+    # --- Market bias summary (optional) ---
     if market_bias:
         bias, conf = market_bias_func()
-        msg += f"🧭 Market Bias: {bias} | Confidence: {conf}/10\n"
+        msg += f"🧭 *Market Bias:* {bias} | Confidence: {conf}/10\n"
+
+    # --- Footer (optional) ---
+    if footer:
+        msg += f"📊 {footer}\n"
+
+    # --- Discord send ---
     try:
         requests.post(WEBHOOK_URL, json={"content": msg}, timeout=10)
+        print(f"[Discord] ✅ Sent: {emoji} {title}")
     except Exception as e:
-        print(f"[Discord] Error: {e}")
+        print(f"[Discord] ❌ Error sending {title}: {e}")
 
 # =============================================================
-# 🧩 TASKS
+# 🧩 TASK SCHEDULE DEFINITIONS
 # =============================================================
 def task_premarket_prep():
     bias, conf = market_bias_func()
@@ -292,9 +478,85 @@ def task_sentiment_check():
                     "Flagged any negative catalysts or news pressure.")
 
 def task_powerhour_review():
-    post_to_discord("Power Hour Signal Review", None,
-                    "Refreshed breakout scans and removed false positives.",
-                    "Prepare for EOD recap and weekly rotations.")
+    """
+    Power Hour Review (15:30 EST)
+    Final rotation & volume scan across the market universe.
+    Identifies top RS₁ₘ leaders and flags names within 1×ATR of breakout levels.
+    """
+    print(f"[{get_est_timestamp()}] Running task: powerhour_review")
+
+    symbols = MARKET_UNIVERSE
+    results = []
+
+    for s in symbols:
+        try:
+            data = fetch_data(s)
+            rs10 = compute_relative_strength(s, period=10)
+            rs1m = compute_relative_strength(s, period=21)
+            vol_ratio = get_volume_ratio(s)
+            atr = compute_atr(s, period=14)
+            last_close = float(data["values"][0]["close"])
+            orh60 = get_orh60(s)
+
+            # ΔBreakout distance in ATR units (how close to trigger)
+            dist_to_breakout = ((orh60 * 1.002) - last_close) / atr if atr > 0 else None
+
+            results.append((s, rs10, rs1m, vol_ratio, dist_to_breakout))
+        except Exception as e:
+            print(f"[PowerHour] {s} error: {e}")
+            continue
+
+    if not results:
+        post_to_discord(
+            "Power Hour Review",
+            "_No data available — check API limits or market status._",
+            "No results produced for this session.",
+            "—"
+        )
+        return
+
+    df = pd.DataFrame(results, columns=["Symbol", "RS10", "RS1M", "VolRatio", "DistToBreakout"])
+    df.sort_values("RS1M", ascending=False, inplace=True)
+    top5 = df.head(5)
+
+    # --- Markdown Table for Discord ---
+    md_table = (
+        "| Ticker | RS₁₀ | RS₁ₘ | Vol/Avg | ΔBreakout | Status |\n"
+        "|:--|--:|--:|--:|--:|:--|\n"
+    )
+
+    for _, row in top5.iterrows():
+        if row.DistToBreakout is not None:
+            if row.DistToBreakout <= 1:
+                proximity = f"{row.DistToBreakout:.1f}×ATR ⚡"
+                status = "🟢 Add-On Ready"
+            else:
+                proximity = f"{row.DistToBreakout:.1f}×ATR"
+                status = "🔵 Leader"
+        else:
+            proximity = "—"
+            status = "⚪ Neutral"
+
+        md_table += (
+            f"| **{row.Symbol}** | {row.RS10:+.2f} | {row.RS1M:+.2f} "
+            f"| {row.VolRatio:.1f}× | {proximity} | {status} |\n"
+        )
+
+    # --- Interpretation / Guidance ---
+    if (top5.RS10 > 0).all() and (top5.VolRatio > 1).mean() > 0.5:
+        interp = "Leaders holding gains — momentum broad and volume-backed."
+        sugg = "Focus on ⚡ ‘Add-On Ready’ names for breakout continuation setups."
+    elif (top5.RS10 < 0).any():
+        interp = "RS softening — leadership rotation likely next session."
+        sugg = "Tighten stops or trim laggards ahead of close."
+    else:
+        interp = "Leadership mixed but stable."
+        sugg = "Maintain exposure to core RS₁ₘ names only."
+
+    footer = f"Universe size {len(MARKET_UNIVERSE)} | Updated {datetime.date.today()}"
+    post_to_discord("Power Hour Review", pd.DataFrame(), interp, sugg, footer)
+
+    print(f"[PowerHour] Scan complete — leaders: {', '.join(top5.Symbol.tolist())}")
 
 def task_recap_log():
     print(f"[{datetime.now()}] Running task: recap_log")
