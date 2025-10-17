@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 """
 run_scan_v5.py  |  Python 3.10+
 -------------------------------------------------------------
@@ -12,17 +12,17 @@ Includes:
 -------------------------------------------------------------
 """
 
-from __future__ import annotations
+from _future_ import annotations
 import os
 import sys
 import time
-import math
 import json
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from statistics import mean
+from zoneinfo import ZoneInfo
 
 # =============================================================
 # 🔐 ENVIRONMENT VARIABLES (set inside Render)
@@ -32,7 +32,7 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_KEY", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 
 # =============================================================
-# ⚙️ GLOBAL SETTINGS
+# ⚙ GLOBAL SETTINGS
 # =============================================================
 TIMEZONE = "EST"
 CACHE_TTL_HOURS = 2
@@ -52,30 +52,15 @@ HOLDINGS = [
     {"symbol": "TSM", "desc": "Taiwan Semiconductor", "qty": 100, "avg": 155.21},
 ]
 
-# SEP IRA note
-ACCOUNT_NOTE = (
-    "🧾 *This portfolio is held within a SEP IRA (tax-sheltered). "
-    "Rebalancing and trimming are tax-free; focus purely on risk optimization.*"
-)
-
 # =============================================================
-# 🕒 SIMPLE CACHING LAYER  (Option A implementation)
+# 🕒 CACHING LAYER
 # =============================================================
 def get_cached_data(symbols: list[str]) -> dict:
-    """
-    Fetch fresh data from Twelve Data if cache older than CACHE_TTL_HOURS.
-    Returns dict {symbol: DataFrame}
-    """
+    """Fetch fresh data from Twelve Data if cache older than CACHE_TTL_HOURS."""
     global CACHE
-    from datetime import datetime, timedelta, timezone
-
-    from datetime import datetime, timedelta, timezone
-
     now = datetime.now(timezone.utc)
     if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
         return CACHE["data"]
-
-
 
     fresh_data = {}
     for s in symbols:
@@ -86,250 +71,193 @@ def get_cached_data(symbols: list[str]) -> dict:
             )
             r = requests.get(url, timeout=10)
             df = pd.DataFrame(r.json().get("values", []))
-            df["close"] = df["close"].astype(float)
-            df["high"] = df["high"].astype(float)
-            df["low"] = df["low"].astype(float)
+            for c in ["close", "high", "low"]:
+                df[c] = df[c].astype(float)
             fresh_data[s] = df
-            time.sleep(0.2)  # gentle throttle
+            time.sleep(0.2)
         except Exception as e:
             print(f"[Cache] Error fetching {s}: {e}")
             fresh_data[s] = pd.DataFrame()
     CACHE = {"timestamp": now, "data": fresh_data}
     return fresh_data
-# =============================================================
-# 📈 CORE COMPUTATION FUNCTIONS
-# =============================================================
 
+# =============================================================
+# 📈 CORE CALCULATIONS
+# =============================================================
 def compute_sma(df: pd.DataFrame, period: int) -> float:
-    """Simple Moving Average for given period."""
     if df.empty or len(df) < period:
         return np.nan
     return df["close"].astype(float).iloc[:period].mean()
 
-def compute_atr(df: pd.DataFrame, period: int = 14) -> float:
-    """Average True Range over last N bars."""
-    if df.empty or len(df) < period:
-        return np.nan
-    highs, lows, closes = df["high"], df["low"], df["close"]
-    trs = []
-    for i in range(1, period + 1):
-        tr = max(
-            highs.iloc[i] - lows.iloc[i],
-            abs(highs.iloc[i] - closes.iloc[i - 1]),
-            abs(lows.iloc[i] - closes.iloc[i - 1]),
-        )
-        trs.append(tr)
-    return mean(trs)
+def compute_rs(symbol: str, window: int = 10) -> float:
+    try:
+        df_sym = fetch_data(symbol)
+        df_spy = fetch_data("SPY")
+        df = pd.merge(
+            df_sym[["datetime", "close"]],
+            df_spy[["datetime", "close"]],
+            on="datetime", suffixes=("_sym", "_spy")
+        ).sort_values("datetime", ascending=False)
+        if len(df) <= window:
+            return 0.0
+        pct_sym = (df["close_sym"].iloc[0] - df["close_sym"].iloc[window]) / df["close_sym"].iloc[window]
+        pct_spy = (df["close_spy"].iloc[0] - df["close_spy"].iloc[window]) / df["close_spy"].iloc[window]
+        return round((pct_sym - pct_spy) * 100, 2)
+    except Exception as e:
+        print(f"[RS] Error computing RS for {symbol}: {e}")
+        return 0.0
 
-def compute_rsi(df: pd.DataFrame, period: int = 14) -> float:
-    """Relative Strength Index (RSI)."""
-    if df.empty or len(df) < period + 1:
-        return np.nan
-    delta = df["close"].diff().dropna()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return float(rsi.iloc[-1])
-
-def compute_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame, days: int = 21) -> float:
-    """Relative strength vs SPY over given days."""
-    if df.empty or df_spy.empty or len(df) < days or len(df_spy) < days:
-        return np.nan
-    pct_ticker = (df["close"].iloc[0] - df["close"].iloc[days - 1]) / df["close"].iloc[days - 1]
-    pct_spy = (df_spy["close"].iloc[0] - df_spy["close"].iloc[days - 1]) / df_spy["close"].iloc[days - 1]
-    return pct_ticker - pct_spy
-
-def fetch_sentiment(symbol: str) -> float:
-    """Fetch simple sentiment score from Finnhub."""
+def get_sentiment(symbol: str) -> float:
     try:
         url = f"https://finnhub.io/api/v1/news-sentiment?symbol={symbol}&token={FINNHUB_API_KEY}"
         r = requests.get(url, timeout=8)
-        return r.json().get("sentiment", {}).get("companyNewsScore", 0)
-    except Exception:
+        data = r.json()
+        return float(data.get("sentiment", {}).get("companyNewsScore", 0))
+    except Exception as e:
+        print(f"[Sentiment] Error for {symbol}: {e}")
         return 0.0
 
-def market_bias() -> tuple[str, float]:
-    """Rudimentary bias evaluator from SPY trend."""
+def fetch_data(symbol: str) -> pd.DataFrame:
+    global CACHE
+    now = datetime.now(timezone.utc)
+    if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
+        if symbol in CACHE["data"]:
+            return CACHE["data"][symbol]
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1day&outputsize=200&apikey={TWELVE_API_KEY}"
+        r = requests.get(url, timeout=10)
+        data = r.json().get("values", [])
+        df = pd.DataFrame(data)
+        if df.empty:
+            raise ValueError("Empty data returned")
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        for c in ["close", "high", "low"]:
+            df[c] = df[c].astype(float)
+        df = df.sort_values("datetime", ascending=False).reset_index(drop=True)
+        CACHE["data"][symbol] = df
+        CACHE["timestamp"] = now
+        return df
+    except Exception as e:
+        print(f"[Fetch] Error fetching {symbol}: {e}")
+        return pd.DataFrame()
+
+def market_bias_func() -> tuple[str, float]:
+    """Determine market bias from SPY SMA trend."""
     try:
         url = f"https://api.twelvedata.com/time_series?symbol=SPY&interval=1day&outputsize=200&apikey={TWELVE_API_KEY}"
         r = requests.get(url, timeout=10)
-        df = pd.DataFrame(r.json().get("values", []))
+        data = r.json().get("values", [])
+        if not data:
+            return "Neutral", 0.0
+        df = pd.DataFrame(data)
         df["close"] = df["close"].astype(float)
-        sma50 = compute_sma(df, 50)
-        sma200 = compute_sma(df, 200)
+        sma50, sma200 = compute_sma(df, 50), compute_sma(df, 200)
+        if np.isnan(sma50) or np.isnan(sma200):
+            return "Neutral", 0.0
         bias = "Bullish" if sma50 > sma200 else "Bearish"
         conf = round(abs(sma50 - sma200) / sma200 * 10, 2)
         return bias, conf
-    except Exception:
+    except Exception as e:
+        print(f"[Market Bias] Error: {e}")
         return "Neutral", 0.0
-# =============================================================
-# 💬 DISCORD OUTPUT HELPERS
-# =============================================================
 
-def post_to_discord(title: str, table_df: pd.DataFrame | None, interpretation: str, suggestions: str):
-    """Unified Discord webhook output."""
+# =============================================================
+# 💬 DISCORD OUTPUT
+# =============================================================
+def post_to_discord(title: str, table_df: pd.DataFrame | None, interpretation: str, suggestions: str, market_bias: bool = False):
     if not WEBHOOK_URL:
         print("[Discord] No webhook defined.")
         return
-
-    from zoneinfo import ZoneInfo
-    ts = datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
-    msg = f"📅 **[{ts}] {title}**\n"
-
+    ts = datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
+    msg = f"📅 [{ts}] {title}\n"
     if table_df is not None and not table_df.empty:
-        msg += "```\n" + table_df.to_string(index=False) + "\n```\n"
-
-    msg += f"💬 **Interpretation:** {interpretation}\n"
-    msg += f"💡 **Suggestion:** {suggestions}\n"
-    msg += f"{ACCOUNT_NOTE}\n"
-
-    bias, conf = market_bias()
-    msg += f"🧭 *Market Bias: {bias} | Confidence: {conf}/10*\n"
-
+        msg += "\n" + table_df.to_string(index=False) + "\n\n"
+    msg += f"💬 Interpretation: {interpretation}\n"
+    msg += f"💡 Suggestion: {suggestions}\n"
+    if "RS₁₀" in interpretation:
+        msg += "(Rotation summary reflects short-term RS₁₀ trends vs SPY)\n"
+    if market_bias:
+        bias, conf = market_bias_func()
+        msg += f"🧭 Market Bias: {bias} | Confidence: {conf}/10\n"
     try:
         requests.post(WEBHOOK_URL, json={"content": msg}, timeout=10)
     except Exception as e:
         print(f"[Discord] Error: {e}")
-# =============================================================
-# 🧩 TASK DEFINITIONS  (13 total)
-# =============================================================
 
+# =============================================================
+# 🧩 TASKS
+# =============================================================
 def task_premarket_prep():
-    """07:00 — VIX, futures, bias update."""
-    bias, conf = market_bias()
+    bias, conf = market_bias_func()
     msg = f"VIX and futures indicate {bias.lower()} bias, confidence {conf}/10."
     post_to_discord("Pre-Market Prep", None, msg, "Maintain awareness for open setup alignment.")
 
 def task_volatility_scan():
-    """07:15 — ATR compression scan."""
     post_to_discord("Volatility Compression Scan", None,
                     "Scanning 50 top symbols for ATR compression.",
                     "Mark tickers with rising RS and low volatility.")
 
 def task_signal_pass():
-    """08:15 — Breakout / Inflection setups."""
     post_to_discord("Breakout/Inflection Signal Pass", None,
                     "New breakout and dual-signal setups scanned.",
                     "Watch leaders above ORH60 with >1.2× volume.")
 
-import json, os
-
 def task_holdings_monitor():
-    """Monitor SEP IRA holdings for breakdowns, recoveries, or catalysts, and summarize RS momentum."""
-
-    from datetime import datetime
     print(f"[{datetime.now()}] Running task: holdings_monitor")
-
     cache_file = "/opt/render/project/src/.cache/holdings_status.json"
     if os.path.exists(cache_file):
         with open(cache_file, "r") as f:
             prev_status = json.load(f)
     else:
         prev_status = {}
-
-    results = []
-    recovery_alerts = []
-    rs_scores = {}
-
+    results, recovery_alerts, rs_scores = [], [], {}
     for h in HOLDINGS:
-        symbol = h["symbol"]
-        avg_cost = h["avg"]
-
+        symbol, avg_cost = h["symbol"], h["avg"]
         try:
             data = fetch_data(symbol)
             last = data["close"].iloc[0]
             sma50 = data["close"].rolling(50).mean().iloc[0]
             sma200 = data["close"].rolling(200).mean().iloc[0]
             sentiment = get_sentiment(symbol)
-            rs10 = compute_rs(symbol, window=10)
+            rs10 = compute_rs(symbol)
             rs_scores[symbol] = rs10
-
             gain = (last - avg_cost) / avg_cost * 100
-            trigger_reason = "Stable"
-            status = "🟢 Stable"
-
-            # === Technical breakdown logic (loosened) ===
+            status, trigger_reason = "🟢 Stable", "Stable"
             if last < sma50 * 0.985 and rs10 < 0:
-                trigger_reason = f"Below SMA50×0.985 ({sma50:.2f}) & RS₁₀↓"
-                status = "🔴 Breakdown"
+                status, trigger_reason = "🔴 Breakdown", f"Below SMA50×0.985 ({sma50:.2f}) & RS₁₀↓"
             elif last < sma200 * 0.993:
-                trigger_reason = f"Below SMA200×0.993 ({sma200:.2f})"
-                status = "🔴 Breakdown"
-            elif sentiment is not None and sentiment < -0.3:
-                trigger_reason = f"Sentiment {sentiment:+.2f}"
-                status = "🟠 Catalyst"
-
-            # === Detect recovery ===
-            prev = prev_status.get(symbol, "")
-            if prev in ("🔴 Breakdown", "🟠 Catalyst") and status == "🟢 Stable":
+                status, trigger_reason = "🔴 Breakdown", f"Below SMA200×0.993 ({sma200:.2f})"
+            elif sentiment < -0.3:
+                status, trigger_reason = "🟠 Catalyst", f"Sentiment {sentiment:+.2f}"
+            if prev_status.get(symbol, "") in ("🔴 Breakdown", "🟠 Catalyst") and status == "🟢 Stable":
                 recovery_alerts.append(symbol)
-
-            results.append([
-                symbol, round(last, 2), avg_cost, f"{gain:+.1f}%",
-                status, trigger_reason
-            ])
+            results.append([symbol, round(last, 2), avg_cost, f"{gain:+.1f}%", status, trigger_reason])
             prev_status[symbol] = status
-
         except Exception as e:
             print(f"[Error] {symbol}: {e}")
-
-    # Save updated statuses
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
     with open(cache_file, "w") as f:
         json.dump(prev_status, f)
-
-    # === Build output DataFrame ===
-    dfout = pd.DataFrame(
-        results,
-        columns=["Symbol", "Last", "Avg", "Gain", "Status", "Trigger"]
-    )
-
-    # === Interpretations ===
+    dfout = pd.DataFrame(results, columns=["Symbol", "Last", "Avg", "Gain", "Status", "Trigger"])
     breakdowns = dfout[dfout["Status"].str.contains("Breakdown")]
     catalysts = dfout[dfout["Status"].str.contains("Catalyst")]
-
     if not breakdowns.empty:
-        interp = f"{len(breakdowns)} holding(s) showing breakdowns."
-        sugg = "Trim or tighten stops; monitor RS recovery."
+        interp, sugg = f"{len(breakdowns)} holding(s) showing breakdowns.", "Trim or tighten stops; monitor RS recovery."
     elif not catalysts.empty:
-        interp = f"{len(catalysts)} sentiment-driven alert(s) detected."
-        sugg = "Review news or volume; avoid adding until momentum stabilizes."
+        interp, sugg = f"{len(catalysts)} sentiment-driven alert(s) detected.", "Review news or volume; avoid adding until momentum stabilizes."
     elif recovery_alerts:
-        interp = f"{len(recovery_alerts)} holding(s) recovered above SMA50."
-        sugg = "Trend health restored; may re-add partial exposure."
+        interp, sugg = f"{len(recovery_alerts)} holding(s) recovered above SMA50.", "Trend health restored; may re-add partial exposure."
     else:
-        interp = "All holdings remain stable."
-        sugg = "No immediate action required."
-
-    # === RS₁₀ rotation summary ===
+        interp, sugg = "All holdings remain stable.", "No immediate action required."
     if rs_scores:
         sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
-        improving = [s for s, r in sorted_rs[:3]]
-        weakening = [s for s, r in sorted_rs[-3:]]
-        rotation_msg = f"🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
-    else:
-        rotation_msg = ""
-
-    # === Post to Discord ===
-    post_to_discord(
-        "Holdings Monitor (SEP IRA)",
-        dfout,
-        f"{interp}\n{rotation_msg}",
-        sugg,
-        market_bias=True
-    )
-
-    # === Separate Recovery Alerts ===
+        improving, weakening = [s for s, _ in sorted_rs[:3]], [s for s, _ in sorted_rs[-3:]]
+        interp += f"\n🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
+    post_to_discord("Holdings Monitor (SEP IRA)", dfout, interp, sugg, market_bias=True)
     for sym in recovery_alerts:
-        post_to_discord(
-            "Recovery Alert",
-            pd.DataFrame([[sym]], columns=["Symbol"]),
-            f"{sym} recovered above key trend support.",
-            "Trend structure restored — technically back to Stable."
-        )
+        post_to_discord("Recovery Alert", pd.DataFrame([[sym]], columns=["Symbol"]),
+                        f"{sym} recovered above key trend support.",
+                        "Trend structure restored — technically back to Stable.")
 
 def task_market_open():
     post_to_discord("Market Open Sync", None,
@@ -357,69 +285,39 @@ def task_powerhour_review():
                     "Prepare for EOD recap and weekly rotations.")
 
 def task_recap_log():
-    """End-of-Day performance recap with RS₁₀ rotation summary and technical overview."""
-
-    from datetime import datetime
     print(f"[{datetime.now()}] Running task: recap_log")
-
-    results = []
-    rs_scores = {}
-
+    results, rs_scores = [], {}
     for h in HOLDINGS:
-        symbol = h["symbol"]
-        avg_cost = h["avg"]
-
+        symbol, avg_cost = h["symbol"], h["avg"]
         try:
             data = fetch_data(symbol)
-            last = data["close"].iloc[0]
-            prev = data["close"].iloc[1]
+            last, prev = data["close"].iloc[0], data["close"].iloc[1]
             gain_today = (last - prev) / prev * 100
             gain_total = (last - avg_cost) / avg_cost * 100
-            rs10 = compute_rs(symbol, window=10)
+            rs10 = compute_rs(symbol)
             rs_scores[symbol] = rs10
-
-            results.append([
-                symbol, round(last, 2), f"{gain_today:+.2f}%", f"{gain_total:+.1f}%", rs10
-            ])
+            results.append([symbol, round(last, 2), f"{gain_today:+.2f}%", f"{gain_total:+.1f}%", rs10])
         except Exception as e:
             print(f"[Error] {symbol}: {e}")
-
-    dfout = pd.DataFrame(
-        results,
-        columns=["Symbol", "Last", "Today %", "Total %", "RS₁₀"]
-    ).sort_values("RS₁₀", ascending=False)
-
-    # === RS rotation summary ===
+    dfout = pd.DataFrame(results, columns=["Symbol", "Last", "Today %", "Total %", "RS₁₀"]).sort_values("RS₁₀", ascending=False)
     sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
-    improving = [s for s, r in sorted_rs[:3]]
-    weakening = [s for s, r in sorted_rs[-3:]]
-
+    improving, weakening = [s for s, _ in sorted_rs[:3]], [s for s, _ in sorted_rs[-3:]]
     rotation_msg = f"🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
-
-    # === Summary stats ===
     avg_gain = dfout["Today %"].apply(lambda x: float(x.strip('%'))).mean()
-    interp = f"Portfolio daily change avg: {avg_gain:+.2f}%"
-    sugg = "Leaders show strength; monitor laggards for support tests."
-
-    post_to_discord(
-        "End-of-Day Recap + RS₁₀ Summary",
-        dfout,
-        f"{interp}\n{rotation_msg}",
-        sugg,
-        market_bias=True
-    )
+    interp, sugg = f"Portfolio daily change avg: {avg_gain:+.2f}%", "Leaders show strength; monitor laggards for support tests."
+    post_to_discord("End-of-Day Recap + RS₁₀ Summary", dfout, f"{interp}\n{rotation_msg}", sugg, market_bias=True)
 
 def task_holdings_continuous():
-    task_holdings_monitor()  # reuse same logic hourly
+    task_holdings_monitor()
 
 def task_portfolio_review():
     post_to_discord("Weekly Portfolio Health Review", None,
                     "Reviewed exposure, equity curve, and drawdown.",
                     "Rebalance as necessary; update next-week plan.")
-# =============================================================
-# 🚀 CLI ENTRYPOINT
-# =============================================================
 
+# =============================================================
+# 🚀 MAIN ENTRYPOINT
+# =============================================================
 TASKS = {
     "premarket_prep": task_premarket_prep,
     "volatility_scan": task_volatility_scan,
@@ -436,22 +334,19 @@ TASKS = {
 }
 
 def main():
-    """Router for Render cron invocation."""
     if len(sys.argv) < 3 or sys.argv[1] != "--task":
         print("Usage: python run_scan_v5.py --task <taskname>")
         sys.exit(1)
-
     task_name = sys.argv[2]
-    task_func = TASKS.get(task_name)
-    if not task_func:
+    func = TASKS.get(task_name)
+    if not func:
         print(f"Unknown task: {task_name}")
         sys.exit(1)
-
     print(f"[{datetime.now()}] Running task: {task_name}")
     try:
-        task_func()
+        func()
     except Exception as e:
         print(f"Error in {task_name}: {e}")
 
-if __name__ == "__main__":
-    main()
+if _name_ == "_main_":
+    main()
