@@ -38,6 +38,18 @@ TIMEZONE = "EST"
 CACHE_TTL_HOURS = 2
 CACHE = {"timestamp": None, "data": {}}
 
+# =============================================================
+# 🕒 TIMESTAMP UTILITIES
+# =============================================================
+from datetime import datetime
+import pytz
+
+def get_est_timestamp():
+    """Return a human-readable timestamp string in US/Eastern time."""
+    tz_est = pytz.timezone("US/Eastern")
+    now_est = datetime.now(tz_est)
+    return now_est.strftime("%b %d %Y | %I:%M %p %Z")
+
 # Holdings: SEP IRA stop-limit list
 HOLDINGS = [
     {"symbol": "FBTC", "desc": "Fidelity Wise Origin Bitcoin Fund", "qty": 100, "avg": 74.38},
