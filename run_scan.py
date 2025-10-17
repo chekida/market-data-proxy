@@ -215,30 +215,121 @@ def task_signal_pass():
                     "New breakout and dual-signal setups scanned.",
                     "Watch leaders above ORH60 with >1.2× volume.")
 
+import json, os
+
 def task_holdings_monitor():
-    """09:00 — SEP IRA holdings risk scan."""
-    data = get_cached_data([h["symbol"] for h in HOLDINGS])
-    rows = []
+    """Monitor SEP IRA holdings for breakdowns, recoveries, or catalysts, and summarize RS momentum."""
+
+    from datetime import datetime
+    print(f"[{datetime.now()}] Running task: holdings_monitor")
+
+    cache_file = "/opt/render/project/src/.cache/holdings_status.json"
+    if os.path.exists(cache_file):
+        with open(cache_file, "r") as f:
+            prev_status = json.load(f)
+    else:
+        prev_status = {}
+
+    results = []
+    recovery_alerts = []
+    rs_scores = {}
+
     for h in HOLDINGS:
-        s = h["symbol"]
-        df = data.get(s, pd.DataFrame())
-        if df.empty:
-            continue
-        last = float(df["close"].iloc[0])
-        gain = (last - h["avg"]) / h["avg"] * 100
-        sma50 = compute_sma(df, 50)
-        sma200 = compute_sma(df, 200)
-        status = "🟢 Stable"
-        if last < sma50 * 0.995 or last < sma200 * 0.997:
-            status = "🔴 Breakdown"
-        sentiment = fetch_sentiment(s)
-        if sentiment < -0.3:
-            status = "🟠 Catalyst"
-        rows.append([s, round(last,2), h["avg"], f"{gain:+.1f}%", status])
-    dfout = pd.DataFrame(rows, columns=["Symbol","Last","Avg","Gain","Status"])
-    post_to_discord("Holdings Monitor (SEP IRA)", dfout,
-                    "Monitoring core holdings for breakdowns or catalysts.",
-                    "Adjust stops or trim weak positions as needed.")
+        symbol = h["symbol"]
+        avg_cost = h["avg"]
+
+        try:
+            data = fetch_data(symbol)
+            last = data["close"].iloc[0]
+            sma50 = data["close"].rolling(50).mean().iloc[0]
+            sma200 = data["close"].rolling(200).mean().iloc[0]
+            sentiment = get_sentiment(symbol)
+            rs10 = compute_rs(symbol, window=10)
+            rs_scores[symbol] = rs10
+
+            gain = (last - avg_cost) / avg_cost * 100
+            trigger_reason = "Stable"
+            status = "🟢 Stable"
+
+            # === Technical breakdown logic (loosened) ===
+            if last < sma50 * 0.985 and rs10 < 0:
+                trigger_reason = f"Below SMA50×0.985 ({sma50:.2f}) & RS₁₀↓"
+                status = "🔴 Breakdown"
+            elif last < sma200 * 0.993:
+                trigger_reason = f"Below SMA200×0.993 ({sma200:.2f})"
+                status = "🔴 Breakdown"
+            elif sentiment is not None and sentiment < -0.3:
+                trigger_reason = f"Sentiment {sentiment:+.2f}"
+                status = "🟠 Catalyst"
+
+            # === Detect recovery ===
+            prev = prev_status.get(symbol, "")
+            if prev in ("🔴 Breakdown", "🟠 Catalyst") and status == "🟢 Stable":
+                recovery_alerts.append(symbol)
+
+            results.append([
+                symbol, round(last, 2), avg_cost, f"{gain:+.1f}%",
+                status, trigger_reason
+            ])
+            prev_status[symbol] = status
+
+        except Exception as e:
+            print(f"[Error] {symbol}: {e}")
+
+    # Save updated statuses
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    with open(cache_file, "w") as f:
+        json.dump(prev_status, f)
+
+    # === Build output DataFrame ===
+    dfout = pd.DataFrame(
+        results,
+        columns=["Symbol", "Last", "Avg", "Gain", "Status", "Trigger"]
+    )
+
+    # === Interpretations ===
+    breakdowns = dfout[dfout["Status"].str.contains("Breakdown")]
+    catalysts = dfout[dfout["Status"].str.contains("Catalyst")]
+
+    if not breakdowns.empty:
+        interp = f"{len(breakdowns)} holding(s) showing breakdowns."
+        sugg = "Trim or tighten stops; monitor RS recovery."
+    elif not catalysts.empty:
+        interp = f"{len(catalysts)} sentiment-driven alert(s) detected."
+        sugg = "Review news or volume; avoid adding until momentum stabilizes."
+    elif recovery_alerts:
+        interp = f"{len(recovery_alerts)} holding(s) recovered above SMA50."
+        sugg = "Trend health restored; may re-add partial exposure."
+    else:
+        interp = "All holdings remain stable."
+        sugg = "No immediate action required."
+
+    # === RS₁₀ rotation summary ===
+    if rs_scores:
+        sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
+        improving = [s for s, r in sorted_rs[:3]]
+        weakening = [s for s, r in sorted_rs[-3:]]
+        rotation_msg = f"🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
+    else:
+        rotation_msg = ""
+
+    # === Post to Discord ===
+    post_to_discord(
+        "Holdings Monitor (SEP IRA)",
+        dfout,
+        f"{interp}\n{rotation_msg}",
+        sugg,
+        market_bias=True
+    )
+
+    # === Separate Recovery Alerts ===
+    for sym in recovery_alerts:
+        post_to_discord(
+            "Recovery Alert",
+            pd.DataFrame([[sym]], columns=["Symbol"]),
+            f"{sym} recovered above key trend support.",
+            "Trend structure restored — technically back to Stable."
+        )
 
 def task_market_open():
     post_to_discord("Market Open Sync", None,
