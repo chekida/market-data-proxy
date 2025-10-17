@@ -12,7 +12,8 @@ Includes:
 -------------------------------------------------------------
 """
 
-from __future__ import annotations
+import datetime
+import pytz
 import os
 import sys
 import time
@@ -20,7 +21,6 @@ import json
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, timezone
 from statistics import mean
 from zoneinfo import ZoneInfo
 
@@ -47,8 +47,8 @@ import pytz
 def get_est_timestamp():
     """Return a human-readable timestamp string in US/Eastern time."""
     tz_est = pytz.timezone("US/Eastern")
-    now_est = datetime.now(tz_est)
-    return now_est.strftime("%b %d %Y | %I:%M %p %Z")
+    now_est = datetime.datetime.now(tz_est)
+    return now_est.strftime("%b %d %Y | %I:%M %p %Z")
 
 # Holdings: SEP IRA stop-limit list
 HOLDINGS = [
@@ -155,8 +155,8 @@ MARKET_UNIVERSE = load_market_universe()
 def get_cached_data(symbols: list[str]) -> dict:
     """Fetch fresh data from Twelve Data if cache older than CACHE_TTL_HOURS."""
     global CACHE
-    now = datetime.now(timezone.utc)
-    if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if CACHE["timestamp"] and (now - CACHE["timestamp"]) < datetime.timedelta(hours=CACHE_TTL_HOURS):
         return CACHE["data"]
 
     fresh_data = {}
@@ -216,7 +216,7 @@ def get_sentiment(symbol: str) -> float:
 
 def fetch_data(symbol: str) -> pd.DataFrame:
     global CACHE
-    now = datetime.now(timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc)
     if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
         if symbol in CACHE["data"]:
             return CACHE["data"][symbol]
@@ -351,7 +351,7 @@ def post_to_discord(
         return
 
     # --- Header timestamp ---
-    ts = datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
+    ts = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%b %d %Y | %I:%M %p %Z")
     msg = f"{emoji} **[{ts}] {title}**\n"
 
     # --- Format table or text body ---
@@ -401,7 +401,7 @@ def task_signal_pass():
                     "Watch leaders above ORH60 with >1.2× volume.")
 
 def task_holdings_monitor():
-    print(f"[{datetime.now()}] Running task: holdings_monitor")
+    print(f"[{datetime.datetime.now()}] Running task: holdings_monitor")
     cache_file = "/opt/render/project/src/.cache/holdings_status.json"
     if os.path.exists(cache_file):
         with open(cache_file, "r") as f:
@@ -559,7 +559,7 @@ def task_powerhour_review():
     print(f"[PowerHour] Scan complete — leaders: {', '.join(top5.Symbol.tolist())}")
 
 def task_recap_log():
-    print(f"[{datetime.now()}] Running task: recap_log")
+    print(f"[{datetime.datetime.now()}] Running task: recap_log")
     results, rs_scores = [], {}
     for h in HOLDINGS:
         symbol, avg_cost = h["symbol"], h["avg"]
