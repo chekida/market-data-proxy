@@ -326,6 +326,181 @@ def get_orh60(symbol: str) -> float:
         print(f"[ORH60] Error {symbol}: {e}")
         return 0.0
 
+# =============================================================
+# 🧠 FINNHUB SENTIMENT + ANALYST INTEGRATION (CACHED)
+# =============================================================
+
+FINNHUB_CACHE_FILE = "finnhub_cache.json"
+FINNHUB_CACHE_TTL_HOURS = 24
+FINNHUB_CACHE = {}
+
+# -------------------------------------------------------------
+# 💾 Cache Utilities
+# -------------------------------------------------------------
+def load_finnhub_cache(force_refresh: bool = False):
+    """Load daily cache or start fresh (used at 07:00 task)."""
+    global FINNHUB_CACHE
+    if force_refresh or not os.path.exists(FINNHUB_CACHE_FILE):
+        FINNHUB_CACHE = {"timestamp": None, "data": {}}
+        print("[Cache] Finnhub cache initialized.")
+        return
+
+    try:
+        with open(FINNHUB_CACHE_FILE, "r") as f:
+            cache = json.load(f)
+        ts = datetime.fromisoformat(cache.get("timestamp"))
+        if (datetime.utcnow() - ts) < timedelta(hours=FINNHUB_CACHE_TTL_HOURS):
+            FINNHUB_CACHE = cache
+            print("[Cache] Finnhub cache loaded (fresh).")
+        else:
+            FINNHUB_CACHE = {"timestamp": None, "data": {}}
+            print("[Cache] Finnhub cache expired — new session.")
+    except Exception as e:
+        print(f"[Cache] Finnhub cache load failed: {e}")
+        FINNHUB_CACHE = {"timestamp": None, "data": {}}
+
+
+def save_finnhub_cache():
+    """Persist Finnhub cache to disk."""
+    global FINNHUB_CACHE
+    try:
+        FINNHUB_CACHE["timestamp"] = datetime.utcnow().isoformat()
+        with open(FINNHUB_CACHE_FILE, "w") as f:
+            json.dump(FINNHUB_CACHE, f)
+        print("[Cache] Finnhub cache saved.")
+    except Exception as e:
+        print(f"[Cache] Finnhub cache save failed: {e}")
+
+
+def get_cached_finnhub(symbol: str, key: str):
+    """Retrieve cached data if available."""
+    global FINNHUB_CACHE
+    return FINNHUB_CACHE.get("data", {}).get(symbol, {}).get(key)
+
+
+def set_cached_finnhub(symbol: str, key: str, value):
+    """Update cache."""
+    global FINNHUB_CACHE
+    FINNHUB_CACHE.setdefault("data", {}).setdefault(symbol, {})[key] = value
+
+
+# -------------------------------------------------------------
+# 🧩 Data Endpoints (cached + throttled)
+# -------------------------------------------------------------
+def get_sentiment(symbol: str) -> float:
+    cached = get_cached_finnhub(symbol, "sentiment")
+    if cached is not None:
+        return cached
+    try:
+        url = f"https://finnhub.io/api/v1/news-sentiment?symbol={symbol}&token={FINNHUB_API_KEY}"
+        r = requests.get(url, timeout=8)
+        score = float(r.json().get("sentiment", {}).get("companyNewsScore", 0))
+        set_cached_finnhub(symbol, "sentiment", score)
+        time.sleep(0.5)
+        return score
+    except Exception as e:
+        print(f"[Sentiment] Error for {symbol}: {e}")
+        return 0.0
+
+
+def get_analyst_rating(symbol: str) -> dict:
+    cached = get_cached_finnhub(symbol, "analyst")
+    if cached is not None:
+        return cached
+    try:
+        url = f"https://finnhub.io/api/v1/stock/recommendation?symbol={symbol}&token={FINNHUB_API_KEY}"
+        res = requests.get(url, timeout=8).json()
+        if not res:
+            val = {"buy": 0, "hold": 0, "sell": 0, "score": 0.0}
+            set_cached_finnhub(symbol, "analyst", val)
+            return val
+        latest = res[0]
+        total = latest["buy"] + latest["hold"] + latest["sell"]
+        score = 0.0 if total == 0 else (latest["buy"] - latest["sell"]) / total
+        val = {"buy": latest["buy"], "hold": latest["hold"], "sell": latest["sell"], "score": round(score, 2)}
+        set_cached_finnhub(symbol, "analyst", val)
+        time.sleep(0.5)
+        return val
+    except Exception as e:
+        print(f"[Analyst] Error fetching {symbol}: {e}")
+        return {"buy": 0, "hold": 0, "sell": 0, "score": 0.0}
+
+
+def get_price_target(symbol: str) -> dict:
+    cached = get_cached_finnhub(symbol, "target")
+    if cached is not None:
+        return cached
+    try:
+        url = f"https://finnhub.io/api/v1/stock/price-target?symbol={symbol}&token={FINNHUB_API_KEY}"
+        res = requests.get(url, timeout=8).json()
+        if "targetMean" not in res or not res["targetMean"]:
+            val = {"target": None, "upside": None}
+            set_cached_finnhub(symbol, "target", val)
+            return val
+        curr = fetch_data(symbol)["close"].iloc[0]
+        upside = (res["targetMean"] - curr) / curr * 100
+        val = {"target": res["targetMean"], "upside": round(upside, 1)}
+        set_cached_finnhub(symbol, "target", val)
+        time.sleep(0.5)
+        return val
+    except Exception as e:
+        print(f"[Target] Error fetching {symbol}: {e}")
+        return {"target": None, "upside": None}
+
+
+# -------------------------------------------------------------
+# 🧮 Composite Sentiment Model
+# -------------------------------------------------------------
+def enrich_with_analyst_data(symbol: str) -> dict:
+    """
+    Combine analyst, price target, and news sentiment
+    into a composite bias score and label.
+    """
+    sentiment = get_sentiment(symbol)
+    analyst = get_analyst_rating(symbol)
+    target = get_price_target(symbol)
+
+    weights = {"analyst": 0.4, "news": 0.4, "target": 0.2}
+    target_score = 0.0
+    if target["upside"] is not None:
+        target_score = max(-1, min(1, target["upside"] / 30))  # normalize −30→−1, +30→+1
+
+    composite = (
+        (analyst["score"] * weights["analyst"]) +
+        (sentiment * weights["news"]) +
+        (target_score * weights["target"])
+    )
+
+    if composite >= 0.3:
+        bias = "⭐️ Bullish Bias"
+    elif composite <= -0.3:
+        bias = "⚠️ Bearish Bias"
+    else:
+        bias = "⚪ Neutral Bias"
+
+    result = {
+        "composite": round(composite, 2),
+        "bias": bias,
+        "analyst_score": analyst["score"],
+        "upside": target["upside"],
+        "sentiment": sentiment
+    }
+    set_cached_finnhub(symbol, "composite", result)
+    return result
+
+
+# -------------------------------------------------------------
+# ⏰ Initialize cache (force refresh during 07:00 Pre-Market)
+# -------------------------------------------------------------
+current_hour_est = datetime.now(ZoneInfo("America/New_York")).hour
+if current_hour_est == 7:
+    load_finnhub_cache(force_refresh=True)
+else:
+    load_finnhub_cache()
+
+# Auto-save cache when script exits
+import atexit
+atexit.register(save_finnhub_cache)
 
 # =============================================================
 # 💬 DISCORD OUTPUT
@@ -356,7 +531,18 @@ def post_to_discord(
     if table_data is not None:
         if isinstance(table_data, pd.DataFrame):
             if not table_data.empty:
-                msg += "```\n" + table_data.to_string(index=False)[:3800] + "\n```\n"
+            # Auto-adjust column width for Discord monospace formatting
+            formatted_table = table_data.copy()
+            formatted_table.columns = [c[:12] for c in formatted_table.columns]  # cap header width
+            msg += "```\n"
+            msg += formatted_table.to_string(
+                index=False,
+                justify="left",
+                col_space=10,
+                max_colwidth=14,
+                formatters={c: lambda x: str(x)[:12] for c in formatted_table.columns}
+            )[:3800]  # truncate safely
+            msg += "\n```\n"
         elif isinstance(table_data, str):
             msg += table_data.strip() + "\n\n"
 
@@ -398,62 +584,155 @@ def task_signal_pass():
                     "New breakout and dual-signal setups scanned.",
                     "Watch leaders above ORH60 with >1.2× volume.")
 
+def bias_with_emoji(bias_text: str) -> str:
+    """Attach a colored emoji to bias description for quick visual scanning."""
+    if "Bullish" in bias_text:
+        return "🟢 " + bias_text
+    elif "Bearish" in bias_text:
+        return "🔴 " + bias_text
+    elif "Neutral" in bias_text:
+        return "⚪ " + bias_text
+    else:
+        return bias_text
+
 def task_holdings_monitor():
+    """
+    Hourly SEP IRA holdings monitor.
+    - Runs each market hour (Mon–Fri)
+    - Enriches data with analyst & sentiment bias
+    - Only sends Discord alert if action is needed
+    """
     print(f"[{datetime.datetime.now()}] Running task: holdings_monitor")
+
     cache_file = "/opt/render/project/src/.cache/holdings_status.json"
     if os.path.exists(cache_file):
         with open(cache_file, "r") as f:
             prev_status = json.load(f)
     else:
         prev_status = {}
+
     results, recovery_alerts, rs_scores = [], [], {}
+    actions_detected = False
+
     for h in HOLDINGS:
         symbol, avg_cost = h["symbol"], h["avg"]
         try:
             data = fetch_data(symbol)
+            if data.empty:
+                continue
+
             last = data["close"].iloc[0]
             sma50 = data["close"].rolling(50).mean().iloc[0]
             sma200 = data["close"].rolling(200).mean().iloc[0]
-            sentiment = get_sentiment(symbol)
+
+            # === Sentiment + Analyst Enrichment ===
+            analyst_data = enrich_with_analyst_data(symbol)
+            sentiment = analyst_data["sentiment"]
+            bias_tag = analyst_data["bias"]
+            upside = analyst_data.get("upside", None)
+            analyst_score = analyst_data.get("analyst_score", 0.0)
+
+            # === Technicals ===
             rs10 = compute_rs(symbol)
             rs_scores[symbol] = rs10
             gain = (last - avg_cost) / avg_cost * 100
-            status, trigger_reason = "🟢 Stable", "Stable"
+
+            # === Status ===
+            status, reason = "🟢 Stable", "Stable"
             if last < sma50 * 0.985 and rs10 < 0:
-                status, trigger_reason = "🔴 Breakdown", f"Below SMA50×0.985 ({sma50:.2f}) & RS₁₀↓"
+                status, reason = "🔴 Breakdown", f"Below SMA50×0.985 ({sma50:.2f}) & RS₁₀↓"
+                actions_detected = True
             elif last < sma200 * 0.993:
-                status, trigger_reason = "🔴 Breakdown", f"Below SMA200×0.993 ({sma200:.2f})"
+                status, reason = "🔴 Breakdown", f"Below SMA200×0.993 ({sma200:.2f})"
+                actions_detected = True
             elif sentiment < -0.3:
-                status, trigger_reason = "🟠 Catalyst", f"Sentiment {sentiment:+.2f}"
+                status, reason = "🟠 Catalyst", f"Sentiment {sentiment:+.2f}"
+                actions_detected = True
+
+            # === Recovery Detection ===
             if prev_status.get(symbol, "") in ("🔴 Breakdown", "🟠 Catalyst") and status == "🟢 Stable":
                 recovery_alerts.append(symbol)
-            results.append([symbol, round(last, 2), avg_cost, f"{gain:+.1f}%", status, trigger_reason])
+                actions_detected = True
+
+            # === Row Output ===
+            results.append([
+                symbol,
+                round(last, 2),
+                f"{gain:+.1f}%",
+                status,
+                bias_tag,
+                f"{upside if upside is not None else '—'}%",
+                f"{analyst_score:+.2f}",
+                reason
+            ])
             prev_status[symbol] = status
+
         except Exception as e:
-            print(f"[Error] {symbol}: {e}")
+            print(f"[HoldingsMonitor] {symbol} error: {e}")
+
+    # === Save Updated State ===
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
     with open(cache_file, "w") as f:
         json.dump(prev_status, f)
-    dfout = pd.DataFrame(results, columns=["Symbol", "Last", "Avg", "Gain", "Status", "Trigger"])
+
+    dfout = pd.DataFrame(
+        results,
+        columns=["Symbol", "Last", "Gain", "Status", "Bias", "Upside", "Analyst", "Reason"]
+    )
+
     breakdowns = dfout[dfout["Status"].str.contains("Breakdown")]
     catalysts = dfout[dfout["Status"].str.contains("Catalyst")]
+
+    # === Skip if No Actionable Events ===
+    if not actions_detected:
+        print(f"[Holdings Monitor] No actionable events. {len(HOLDINGS)} holdings stable.")
+        return
+
+    # === Interpretation / Suggestion ===
     if not breakdowns.empty:
-        interp, sugg = f"{len(breakdowns)} holding(s) showing breakdowns.", "Trim or tighten stops; monitor RS recovery."
+        interp, sugg = (
+            f"{len(breakdowns)} holding(s) showing breakdowns.",
+            "Trim or tighten stops; monitor RS recovery."
+        )
     elif not catalysts.empty:
-        interp, sugg = f"{len(catalysts)} sentiment-driven alert(s) detected.", "Review news or volume; avoid adding until momentum stabilizes."
+        interp, sugg = (
+            f"{len(catalysts)} sentiment-driven alert(s) detected.",
+            "Review news or volume; avoid adding until momentum stabilizes."
+        )
     elif recovery_alerts:
-        interp, sugg = f"{len(recovery_alerts)} holding(s) recovered above SMA50.", "Trend health restored; may re-add partial exposure."
+        interp, sugg = (
+            f"{len(recovery_alerts)} holding(s) recovered above SMA50.",
+            "Trend health restored; may re-add partial exposure."
+        )
     else:
         interp, sugg = "All holdings remain stable.", "No immediate action required."
+
+    # === RS₁₀ Rotation Summary ===
     if rs_scores:
         sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
         improving, weakening = [s for s, _ in sorted_rs[:3]], [s for s, _ in sorted_rs[-3:]]
-        interp += f"\n🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
-    post_to_discord("Holdings Monitor (SEP IRA)", dfout, interp, sugg, market_bias=True)
+        rotation_msg = f"🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
+    else:
+        rotation_msg = "RS₁₀ data unavailable."
+
+    # === Send Discord Alert ===
+    post_to_discord(
+        "Holdings Monitor (SEP IRA)",
+        dfout,
+        f"{interp}\n🧩 RS₁₀ Momentum Rotation: {rotation_msg}",
+        sugg,
+        market_bias=True
+    )
+
+    # === Optional Recovery Alerts ===
     for sym in recovery_alerts:
-        post_to_discord("Recovery Alert", pd.DataFrame([[sym]], columns=["Symbol"]),
-                        f"{sym} recovered above key trend support.",
-                        "Trend structure restored — technically back to Stable.")
+        post_to_discord(
+            "Recovery Alert",
+            pd.DataFrame([[sym]], columns=["Symbol"]),
+            f"{sym} recovered above key trend support.",
+            "Trend structure restored — technically back to Stable."
+        )
+
 
 def task_market_open():
     post_to_discord("Market Open Sync", None,
@@ -466,10 +745,30 @@ def task_stop_health():
                     "Maintain <1% portfolio risk per trade.")
 
 def task_midday_refresh():
-    post_to_discord("Midday RS/Volume Refresh", None,
-                    "Updated RS₁₀/RS₁ₘ and volume leadership.",
-                    "Continue tracking top 3 RS leaders for adds.")
+    leaders = []
+    for s in MARKET_UNIVERSE[:20]:
+        try:
+            enriched = enrich_with_analyst_data(s)
+            leaders.append([
+                s,
+                enriched["bias"],
+                f"{enriched['upside'] if enriched['upside'] is not None else '—'}%",
+                f"{enriched['analyst_score']:+.2f}",
+                f"{enriched['sentiment']:+.2f}"
+            ])
+        except Exception as e:
+            print(f"[Midday] {s} error: {e}")
+            continue
 
+    df = pd.DataFrame(leaders, columns=["Symbol", "Bias", "Upside", "Analyst", "Sentiment"])
+
+    post_to_discord(
+        "Midday RS/Volume + Analyst Refresh",
+        df,
+        "Updated RS₁₀/RS₁ₘ and analyst consensus for top symbols.",
+        "Focus on ⭐️ Bullish Bias names with RS₁ₘ > 0 and > +10 % upside."
+    )
+yes
 def task_sentiment_check():
     post_to_discord("Catalyst / Sentiment Check", None,
                     "Refreshed Finnhub sentiment for held symbols.",
@@ -577,7 +876,37 @@ def task_recap_log():
     rotation_msg = f"🧩 RS₁₀ Momentum Rotation: 🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
     avg_gain = dfout["Today %"].apply(lambda x: float(x.strip('%'))).mean()
     interp, sugg = f"Portfolio daily change avg: {avg_gain:+.2f}%", "Leaders show strength; monitor laggards for support tests."
-    post_to_discord("End-of-Day Recap + RS₁₀ Summary", dfout, f"{interp}\n{rotation_msg}", sugg, market_bias=True)
+
+# === RS₁₀ Momentum Rotation Summary ===
+    if rs_scores:
+        sorted_rs = sorted(rs_scores.items(), key=lambda x: x[1], reverse=True)
+        improving = [s for s, _ in sorted_rs[:3]]
+        weakening = [s for s, _ in sorted_rs[-3:]]
+        rotation_msg = f"🔼 Improving: {', '.join(improving)} | 🔽 Weakening: {', '.join(weakening)}"
+    else:
+        rotation_msg = "RS₁₀ data unavailable."
+
+# === Portfolio Bias Summary (based on bias_with_emoji tags from holdings monitor) ===
+    bias_score = 0
+    for sym in rs_scores.keys():
+        bias_info = enrich_with_analyst_data(sym)
+        if "Bullish" in bias_info["bias"]:
+            bias_score += 1
+        elif "Bearish" in bias_info["bias"]:
+            bias_score -= 1
+
+    bias_summary = (
+        "Overall Portfolio Bias: 🟢 Bullish" if bias_score > 0 else
+        "Overall Portfolio Bias: 🔴 Bearish" if bias_score < 0 else
+        "Overall Portfolio Bias: ⚪ Neutral"
+    )
+    post_to_discord(
+        "End-of-Day Recap + RS₁₀ Summary",
+        dfout,
+        f"{interp}\n🧩 RS₁₀ Momentum Rotation: {rotation_msg}\n{bias_summary}",
+        sugg,
+        market_bias=True
+    )
 
 def task_holdings_continuous():
     task_holdings_monitor()
