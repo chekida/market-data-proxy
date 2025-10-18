@@ -32,6 +32,9 @@ TWELVE_API_KEY = os.getenv("TWELVE_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_KEY", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 
+# Ensure local cache directory exists before use
+os.makedirs("/opt/render/project/src/.cache", exist_ok=True)
+
 # =============================================================
 # ⚙ GLOBAL SETTINGS
 # =============================================================
