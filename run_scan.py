@@ -13,6 +13,7 @@ Includes:
 """
 
 import datetime
+from datetime import datetime, timedelta
 import pytz
 import os
 import sys
@@ -43,9 +44,8 @@ CACHE = {"timestamp": None, "data": {}}
 # =============================================================
 
 def get_est_timestamp():
-    """Return a human-readable timestamp string in US/Eastern time."""
     tz_est = pytz.timezone("US/Eastern")
-    now_est = datetime.datetime.now(tz_est)
+    now_est = datetime.now(tz_est)
     return now_est.strftime("%b %d %Y | %I:%M %p %Z")
 
 # Holdings: SEP IRA stop-limit list
@@ -202,39 +202,39 @@ def compute_rs(symbol: str, window: int = 10) -> float:
         print(f"[RS] Error computing RS for {symbol}: {e}")
         return 0.0
 
-def get_sentiment(symbol: str) -> float:
-    try:
-        url = f"https://finnhub.io/api/v1/news-sentiment?symbol={symbol}&token={FINNHUB_API_KEY}"
-        r = requests.get(url, timeout=8)
-        data = r.json()
-        return float(data.get("sentiment", {}).get("companyNewsScore", 0))
-    except Exception as e:
-        print(f"[Sentiment] Error for {symbol}: {e}")
-        return 0.0
-
 def fetch_data(symbol: str) -> pd.DataFrame:
     global CACHE
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.now(datetime.timezone.utc)
+
     if CACHE["timestamp"] and (now - CACHE["timestamp"]) < timedelta(hours=CACHE_TTL_HOURS):
         if symbol in CACHE["data"]:
             return CACHE["data"][symbol]
+
     try:
         url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1day&outputsize=200&apikey={TWELVE_API_KEY}"
         r = requests.get(url, timeout=10)
-        data = r.json().get("values", [])
+        resp = r.json()
+
+        # ✅ Add this guard:
+        if "values" not in resp or not resp["values"]:
+            print(f"[Fetch] {symbol}: no data or API error — skipping")
+            return pd.DataFrame()
+
+        data = resp["values"]
         df = pd.DataFrame(data)
-        if df.empty:
-            raise ValueError("Empty data returned")
         df["datetime"] = pd.to_datetime(df["datetime"])
         for c in ["close", "high", "low"]:
             df[c] = df[c].astype(float)
         df = df.sort_values("datetime", ascending=False).reset_index(drop=True)
+
         CACHE["data"][symbol] = df
         CACHE["timestamp"] = now
         return df
+
     except Exception as e:
         print(f"[Fetch] Error fetching {symbol}: {e}")
         return pd.DataFrame()
+
 
 def market_bias_func() -> tuple[str, float]:
     """Determine market bias from SPY SMA trend."""
@@ -531,18 +531,18 @@ def post_to_discord(
     if table_data is not None:
         if isinstance(table_data, pd.DataFrame):
             if not table_data.empty:
-            # Auto-adjust column width for Discord monospace formatting
-            formatted_table = table_data.copy()
-            formatted_table.columns = [c[:12] for c in formatted_table.columns]  # cap header width
-            msg += "```\n"
-            msg += formatted_table.to_string(
-                index=False,
-                justify="left",
-                col_space=10,
-                max_colwidth=14,
-                formatters={c: lambda x: str(x)[:12] for c in formatted_table.columns}
-            )[:3800]  # truncate safely
-            msg += "\n```\n"
+                # Auto-adjust column width for Discord monospace formatting
+                formatted_table = table_data.copy()
+                formatted_table.columns = [c[:12] for c in formatted_table.columns]  # cap header width
+                msg += "```\n"
+                msg += formatted_table.to_string(
+                    index=False,
+                    justify="left",
+                    col_space=10,
+                    max_colwidth=14,
+                    formatters={c: lambda x: str(x)[:12] for c in formatted_table.columns}
+                )[:3800]  # truncate safely
+                msg += "\n```\n"
         elif isinstance(table_data, str):
             msg += table_data.strip() + "\n\n"
 
@@ -768,7 +768,7 @@ def task_midday_refresh():
         "Updated RS₁₀/RS₁ₘ and analyst consensus for top symbols.",
         "Focus on ⭐️ Bullish Bias names with RS₁ₘ > 0 and > +10 % upside."
     )
-yes
+
 def task_sentiment_check():
     post_to_discord("Catalyst / Sentiment Check", None,
                     "Refreshed Finnhub sentiment for held symbols.",
@@ -792,7 +792,7 @@ def task_powerhour_review():
             rs1m = compute_relative_strength(s, period=21)
             vol_ratio = get_volume_ratio(s)
             atr = compute_atr(s, period=14)
-            last_close = float(data["values"][0]["close"])
+            last_close = float(data["close"].iloc[0])
             orh60 = get_orh60(s)
 
             # ΔBreakout distance in ATR units (how close to trigger)
