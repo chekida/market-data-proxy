@@ -12,7 +12,7 @@ Includes:
 -------------------------------------------------------------
 """
 
-import datetime
+import datetime as dt
 from datetime import datetime, timedelta
 import pytz
 import os
@@ -76,7 +76,7 @@ def load_market_universe():
     Cache refreshes once per trading day (first 07:00 AM run).
     """
     key = os.getenv("TWELVE_KEY")
-    today = datetime.date.today()
+    today = dt.date.today()
 
     if os.path.exists(CACHE_FILE):
         try:
